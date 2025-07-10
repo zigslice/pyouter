@@ -35,9 +35,9 @@ def create_parser(description, tasks="tasks"):
     )
     
     opt_parser.add_argument(
-        "-i", "--inspect",
-        dest="inspect",
-        help="inspect the router path",
+        "-t", "--tree",
+        dest="tree",
+        help="print all available router paths or inspect router tree structure",
         action="store_true",
     )
 

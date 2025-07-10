@@ -47,6 +47,15 @@ class App(object):
             
         self.router.context(self.config, self.options, self.executor)
 
+        if getattr(self.options, 'tree', False):
+            if self.options.actions:
+                # 如果有actions参数，显示路径追踪和子树
+                self.router.print_tree(self.options.actions)
+            else:
+                # 如果没有actions参数，显示完整树
+                self.router.print_tree()
+            return self
+
         if self.options.tasks:
             for task in self.router.tasks():
                 print(task)
