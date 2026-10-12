@@ -130,6 +130,8 @@ if __name__=="__main__":
 
 ## local web
 
+[pyouter web ui](pyouter-web.mp4)
+
 Open the current router in a browser. The server binds to `127.0.0.1:8765` and uses only the Python standard library.
 
 ```shell
