@@ -7,25 +7,26 @@ PAGE = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light">
 <title>pyouter</title>
 <style>
   :root {
-    --bg: #10140f;
-    --bg-raised: #171d14;
-    --bg-sunken: #0c100b;
-    --line: #31392b;
-    --line-strong: #46513c;
-    --text: #e7eedc;
-    --muted: #93a088;
-    --faint: #6d7864;
-    --accent: #dff36a;
-    --accent-ink: #17200c;
-    --ok: #8ed18a;
-    --err: #f09988;
-    --run: #8fd0ff;
-    --wait: #e6c36a;
-    --shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+    --bg: #ffffff;
+    --bg-raised: #fff8f3;
+    --bg-sunken: #fff4eb;
+    --line: #f3d7c0;
+    --line-strong: #f0b888;
+    --text: #e8590c;
+    --muted: #f07a2a;
+    --faint: #f4a15a;
+    --accent: #f97316;
+    --accent-ink: #ffffff;
+    --icon: #ffb067;
+    --ok: #2f9e44;
+    --err: #d64545;
+    --run: #e8590c;
+    --wait: #f4a15a;
+    --shadow: 0 12px 28px rgba(232, 89, 12, 0.08);
     --sans: "Avenir Next", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
     --mono: "Sarasa Mono SC", "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
     --serif: Georgia, "Songti SC", "Noto Serif SC", serif;
@@ -51,10 +52,10 @@ PAGE = r"""<!DOCTYPE html>
     gap: 16px;
     padding: 12px 18px;
     border-bottom: 1px solid var(--line);
-    background: #141a12;
+    background: #ffffff;
   }
   .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-  .brand svg { color: var(--accent); flex: none; }
+  .brand svg { color: var(--icon); flex: none; }
   .brand strong {
     font-family: var(--serif);
     font-size: 22px;
@@ -63,8 +64,8 @@ PAGE = r"""<!DOCTYPE html>
   }
   .brand em {
     font-style: normal;
-    color: var(--accent-ink);
-    background: var(--accent);
+    color: var(--text);
+    background: #ffe4cc;
     border-radius: 999px;
     padding: 2px 8px;
     font-size: 12px;
@@ -131,12 +132,12 @@ PAGE = r"""<!DOCTYPE html>
     text-align: left;
     user-select: none;
   }
-  .tree-row:hover { background: rgba(223, 243, 106, 0.06); }
-  .tree-row.selected { background: #242c1d; box-shadow: inset 2px 0 0 var(--accent); }
+  .tree-row:hover { background: #fff1e6; }
+  .tree-row.selected { background: #ffe8d6; box-shadow: inset 2px 0 0 var(--accent); }
   .twist, .run-mini {
     border: 0;
     background: transparent;
-    color: var(--muted);
+    color: var(--icon);
     padding: 0;
     width: 16px;
     height: 18px;
@@ -147,18 +148,19 @@ PAGE = r"""<!DOCTYPE html>
     width: 22px;
     height: 22px;
     border-radius: 6px;
-    color: var(--accent-ink);
-    background: var(--accent);
+    color: var(--icon);
+    background: #fff1e4;
+    border: 1px solid #ffd7b5;
     font-size: 11px;
   }
-  .run-mini:hover { filter: brightness(1.08); }
+  .run-mini:hover { background: #ffe4cc; }
   .tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tree-kind { color: var(--faint); font-size: 11px; }
   .dot {
     width: 8px;
     height: 8px;
     border-radius: 99px;
-    background: #5c6754;
+    background: var(--icon);
   }
   .dot[data-status="pending"] { background: var(--wait); }
   .dot[data-status="running"] {
@@ -169,8 +171,8 @@ PAGE = r"""<!DOCTYPE html>
   .dot[data-status="error"] { background: var(--err); }
   .dot[data-status="cancelled"] { background: var(--wait); }
   @keyframes pulse {
-    70% { box-shadow: 0 0 0 6px rgba(143, 208, 255, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(143, 208, 255, 0); }
+    70% { box-shadow: 0 0 0 6px rgba(255, 176, 103, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(255, 176, 103, 0); }
   }
   .aside-foot {
     padding: 10px 14px 14px;
@@ -205,14 +207,14 @@ PAGE = r"""<!DOCTYPE html>
     border-radius: 999px;
     padding: 3px 8px;
     font-size: 12px;
-    background: #242c1d;
-    color: var(--muted);
+    background: #fff1e6;
+    color: var(--text);
   }
-  .pill.running { color: var(--run); background: rgba(143, 208, 255, 0.12); }
-  .pill.pending { color: var(--wait); background: rgba(230, 195, 106, 0.12); }
-  .pill.success { color: var(--ok); background: rgba(142, 209, 138, 0.12); }
-  .pill.error { color: var(--err); background: rgba(240, 153, 136, 0.12); }
-  .pill.cancelled { color: var(--wait); background: rgba(230, 195, 106, 0.12); }
+  .pill.running { color: var(--text); background: #ffe4cc; }
+  .pill.pending { color: #c2410c; background: #fff1e4; }
+  .pill.success { color: var(--ok); background: #e8f6ec; }
+  .pill.error { color: var(--err); background: #fdecec; }
+  .pill.cancelled { color: #c2410c; background: #fff1e4; }
   .signature, .path-code, .doc {
     font-family: var(--mono);
     font-size: 12px;
@@ -313,7 +315,7 @@ PAGE = r"""<!DOCTYPE html>
     left: 50%;
     bottom: 18px;
     transform: translateX(-50%) translateY(12px);
-    background: #242c1d;
+    background: #ffffff;
     color: var(--text);
     border: 1px solid var(--line-strong);
     border-radius: 999px;
