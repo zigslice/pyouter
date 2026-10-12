@@ -130,7 +130,7 @@ if __name__=="__main__":
 
 ## local web
 
-[pyouter web ui](pyouter-web.mp4)
+https://cursor.com/artifacts/v/art-1cdde7f3-5756-49a3-97ac-2d54dc193da9
 
 Open the current router in a browser. The server binds to `127.0.0.1:8765` and uses only the Python standard library.
 
