@@ -41,4 +41,33 @@ def create_parser(description, tasks="tasks"):
         action="store_true",
     )
 
+    opt_parser.add_argument(
+        "-w", "--web",
+        dest="web",
+        help="start a local web ui to browse and run routers",
+        action="store_true",
+    )
+
+    opt_parser.add_argument(
+        "--host",
+        dest="host",
+        default="127.0.0.1",
+        help="host for the local web ui (default: 127.0.0.1)",
+    )
+
+    opt_parser.add_argument(
+        "--port",
+        dest="port",
+        default=8765,
+        type=int,
+        help="port for the local web ui (default: 8765)",
+    )
+
+    opt_parser.add_argument(
+        "--no-browser",
+        dest="no_browser",
+        help="do not open a browser when starting the web ui",
+        action="store_true",
+    )
+
     return opt_parser

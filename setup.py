@@ -7,7 +7,7 @@ this_directory = Path(__file__).parent
 long_description = (this_directory / "README.md").read_text()
 
 setup(name="pyouter",
-      version="0.1.1",
+      version="0.1.2",
       description="Python command line tasks router",
       long_description=long_description,
       long_description_content_type='text/markdown',

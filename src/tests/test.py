@@ -62,6 +62,10 @@ if __name__=="__main__":
         ## dump router path and execute:
         * python test.py test.hello -v
         * python test.py test.hello --view
+
+        ## browse and run in a local web ui:
+        * python test.py --web
+        * python test.py test.hello --web --no-browser
     '''
     
     app = App(
