@@ -12,21 +12,21 @@ PAGE = r"""<!DOCTYPE html>
 <style>
   :root {
     --bg: #ffffff;
-    --bg-raised: #fff8f3;
-    --bg-sunken: #fff4eb;
-    --line: #f3d7c0;
-    --line-strong: #f0b888;
-    --text: #e8590c;
-    --muted: #f07a2a;
-    --faint: #f4a15a;
-    --accent: #f97316;
+    --bg-raised: #f6f5f3;
+    --bg-sunken: #f3f2f0;
+    --line: #e6e4e1;
+    --line-strong: #d5d2cd;
+    --text: #1c1c1e;
+    --muted: #6e6e73;
+    --faint: #8e8e93;
+    --accent: #e8943a;
     --accent-ink: #ffffff;
-    --icon: #ffb067;
+    --icon: #f0a04a;
     --ok: #2f9e44;
     --err: #d64545;
-    --run: #e8590c;
-    --wait: #f4a15a;
-    --shadow: 0 12px 28px rgba(232, 89, 12, 0.08);
+    --run: #e8943a;
+    --wait: #e0a15a;
+    --shadow: 0 10px 24px rgba(28, 28, 30, 0.06);
     --sans: "Avenir Next", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
     --mono: "Sarasa Mono SC", "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
     --serif: Georgia, "Songti SC", "Noto Serif SC", serif;
@@ -64,8 +64,8 @@ PAGE = r"""<!DOCTYPE html>
   }
   .brand em {
     font-style: normal;
-    color: var(--text);
-    background: #ffe4cc;
+    color: #9a5b16;
+    background: #f8ead6;
     border-radius: 999px;
     padding: 2px 8px;
     font-size: 12px;
@@ -132,8 +132,8 @@ PAGE = r"""<!DOCTYPE html>
     text-align: left;
     user-select: none;
   }
-  .tree-row:hover { background: #fff1e6; }
-  .tree-row.selected { background: #ffe8d6; box-shadow: inset 2px 0 0 var(--accent); }
+  .tree-row:hover { background: #f3f1ee; }
+  .tree-row.selected { background: #f8ead6; box-shadow: inset 2px 0 0 var(--icon); }
   .twist, .run-mini {
     border: 0;
     background: transparent;
@@ -149,11 +149,11 @@ PAGE = r"""<!DOCTYPE html>
     height: 22px;
     border-radius: 6px;
     color: var(--icon);
-    background: #fff1e4;
-    border: 1px solid #ffd7b5;
+    background: #fff8ef;
+    border: 1px solid #f3d2a8;
     font-size: 11px;
   }
-  .run-mini:hover { background: #ffe4cc; }
+  .run-mini:hover { background: #f8ead6; }
   .tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tree-kind { color: var(--faint); font-size: 11px; }
   .dot {
@@ -207,14 +207,14 @@ PAGE = r"""<!DOCTYPE html>
     border-radius: 999px;
     padding: 3px 8px;
     font-size: 12px;
-    background: #fff1e6;
-    color: var(--text);
+    background: #f3f2f0;
+    color: var(--muted);
   }
-  .pill.running { color: var(--text); background: #ffe4cc; }
-  .pill.pending { color: #c2410c; background: #fff1e4; }
+  .pill.running { color: #9a5b16; background: #f8ead6; }
+  .pill.pending { color: #9a5b16; background: #f8ead6; }
   .pill.success { color: var(--ok); background: #e8f6ec; }
   .pill.error { color: var(--err); background: #fdecec; }
-  .pill.cancelled { color: #c2410c; background: #fff1e4; }
+  .pill.cancelled { color: var(--muted); background: #f3f2f0; }
   .signature, .path-code, .doc {
     font-family: var(--mono);
     font-size: 12px;
@@ -243,9 +243,11 @@ PAGE = r"""<!DOCTYPE html>
     padding: 8px 14px;
     border: 1px solid transparent;
   }
-  .primary { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
-  .ghost, .danger { background: transparent; }
-  .ghost { border-color: var(--line-strong); }
+  .primary { background: #5c5c5e; color: #ffffff; font-weight: 650; }
+  .primary:hover { background: #3f3f41; }
+  .ghost, .danger { background: #f3f2f0; color: var(--text); }
+  .ghost { border-color: transparent; }
+  .ghost:hover { background: #e8e6e3; }
   .danger { border-color: var(--err); color: var(--err); }
   .command {
     margin-top: 12px;
@@ -270,7 +272,7 @@ PAGE = r"""<!DOCTYPE html>
     padding: 10px;
     background: var(--bg-raised);
   }
-  .card.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .card.selected { background: #fff8ef; border-color: #f3d2a8; box-shadow: none; }
   .card-top { display: flex; align-items: center; gap: 8px; }
   .card-name {
     border: 0;
@@ -308,7 +310,7 @@ PAGE = r"""<!DOCTYPE html>
   .log-line .ts { color: var(--faint); }
   .log-line .msg { white-space: pre-wrap; overflow-wrap: anywhere; }
   .log-line.stderr .msg { color: var(--err); }
-  .log-line.meta .msg { color: var(--accent); }
+  .log-line.meta .msg { color: #9a5b16; }
   .empty { color: var(--muted); padding: 18px 12px; }
   #toast {
     position: fixed;
