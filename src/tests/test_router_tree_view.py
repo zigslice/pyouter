@@ -60,6 +60,10 @@ if __name__=="__main__":
         ## dump router path and execute:
         * python test_router_tree_view.py complex.deep -v
         * python test_router_tree_view.py complex.deep --view
+
+        ## browse and run in a local web ui:
+        * python test_router_tree_view.py --web
+        * python test_router_tree_view.py complex.deep --web --no-browser
     '''
     
     app = App(

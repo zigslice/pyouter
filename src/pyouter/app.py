@@ -35,6 +35,29 @@ class App(object):
         self.opt_parser.add_argument(*args, **kwds)
         return self
 
+    def web(self, host="127.0.0.1", port=8765, open_browser=True, focus=None):
+        """Start the local web ui for this app's router."""
+        if self.router is None:
+            raise NotInit("self.router in App")
+
+        if self.config is None:
+            raise NotInit("self.config in App")
+
+        if self.options is None:
+            self.options = self.opt_parser.parse_args()
+
+        self.router.context(self.config, self.options, self.executor)
+
+        from pyouter.web import serve
+        serve(
+            self,
+            host=host,
+            port=port,
+            open_browser=open_browser,
+            focus="" if focus is None else focus,
+        )
+        return self
+
     def run(self):
         if self.router is None:
             raise NotInit("self.router in App")
@@ -46,6 +69,15 @@ class App(object):
             self.options = self.opt_parser.parse_args()
             
         self.router.context(self.config, self.options, self.executor)
+
+        if getattr(self.options, 'web', False):
+            self.web(
+                host=getattr(self.options, "host", "127.0.0.1"),
+                port=getattr(self.options, "port", 8765),
+                open_browser=not getattr(self.options, "no_browser", False),
+                focus=self.options.actions,
+            )
+            return self
 
         if getattr(self.options, 'tree', False):
             if self.options.actions:

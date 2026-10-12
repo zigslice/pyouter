@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import inspect
 
 from concurrent.futures import Executor
@@ -36,7 +37,10 @@ class LeafExecutor:
             await run_async(self.leaf, self.config, self.options)
         else:
             loop = asyncio.get_running_loop()
+            # Keep the caller's contextvars in the worker thread so a web run
+            # can attribute prints from synchronous actions to the right node.
+            ctx = contextvars.copy_context()
             await loop.run_in_executor(
                 self.executor,
-                partial(run_sync, self.leaf, self.config, self.options),
+                partial(ctx.run, partial(run_sync, self.leaf, self.config, self.options)),
             )

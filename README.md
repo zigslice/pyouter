@@ -88,6 +88,10 @@ if __name__=="__main__":
         ## dump router path and execute:
         * python test.py test.hello -v
         * python test.py test.hello --view
+
+        ## browse and run in a local web ui:
+        * python test.py --web
+        * python test.py test.hello --web --no-browser
     '''
     
     app = App(
@@ -124,7 +128,25 @@ if __name__=="__main__":
     
 ```
 
+## local web
+
+Open the current router in a browser. The server binds to `127.0.0.1:8765` and uses only the Python standard library.
+
+```shell
+python test.py --web
+python test.py --web --port 9000
+python test.py test.hello --web --no-browser
+```
+
+The left column is the route tree. The right panel shows the selected node's status, a map of the nearby routes, and the logs captured from that node's standard output and standard error. Click a node to inspect it. Use ▶, double-click, or 执行 to run it. Running a router runs its children, same as the command line.
+
+`app.web()` starts the same page from Python. `--host` defaults to localhost; binding another interface exposes task execution on that interface.
+
 ## What's new
+
+### 0.1.2
+
+* add a local web ui (`--web`) to browse, visualize, and run routers
 
 ### 0.1.0
 
