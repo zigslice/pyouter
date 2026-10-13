@@ -165,7 +165,49 @@ The left column is the route tree. The right panel shows the selected node's sta
 
 `app.web()` starts the same page from Python. `--host` defaults to localhost; binding another interface exposes task execution on that interface.
 
+## web services
+
+A route is a command (`cli`), a router (`router`), or a web endpoint (`web`). `node_kind` reports which. A Flask or FastAPI application used to sit in the tree as one opaque node, so the routes declared inside it were invisible. Mounting the application flattens each HTTP route into a pyouter node. The command line, `--tasks`, and the local web ui then see those routes.
+
+Flask and FastAPI are not required to install pyouter. They are imported only by the application you mount.
+
+```python
+from flask import Flask
+from pyouter.app import App
+
+service = Flask(__name__)
+
+@service.get("/health")
+def health():
+    """service is up"""
+    return {"ok": True}
+
+@service.get("/users/<int:user_id>")
+def user(user_id):
+    return {"user_id": user_id}
+
+app = App(config={})
+app.option("--user-id", dest="user_id")
+app.include(service, prefix="api")
+app.run()
+```
+
+```shell
+python app.py api.health
+python app.py api.users.user_id --user-id 7
+python app.py --tasks
+```
+
+`api.health` is `GET /health`. `api.users.user_id` is `GET /users/<int:user_id>`. A path parameter is taken from an option of the same name, from `options.params`, or from config. Several methods on one path become `get`, `post`, and the other method names. Running a flattened node calls that endpoint in-process and returns `status`, `body`, `method`, and `path`. A response of 400 or higher fails the node. `flatten(service)` returns the same router when you want to mount it yourself.
+
+FastAPI applications flatten the same way. `GET /users/{user_id}` becomes `users.user_id`.
+
 ## What's new
+
+### 0.3.0
+
+* a route is `cli`, `router`, or `web`
+* Flask and FastAPI applications flatten into pyouter nodes
 
 ### 0.2.0
 

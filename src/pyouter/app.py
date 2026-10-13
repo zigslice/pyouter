@@ -6,7 +6,7 @@ import sys
 from pyouter.context import Context, Hooks, RunResult
 from pyouter.default import create_parser
 from pyouter.errors import NotInit
-from pyouter.router import Router
+from pyouter.router import Router, _as_router
 
 class App(object):
     def __init__(self, config=None, parser=None, executor=None):
@@ -35,18 +35,21 @@ class App(object):
             raise NotInit("self.router in App")
     
     def use(self, router: Router):
-        """Replace the application's router."""
-        self.router = router
+        """Replace the application's router.
+
+        A Flask or FastAPI application is flattened into routes first.
+        """
+        self.router = _as_router(router)
         return self
 
     def include(self, router: Router, prefix=None):
         """Mount ``router`` on the application router.
 
         The first call sets the router. Later calls merge routes. ``prefix``
-        mounts them under that name.
+        mounts them under that name. A Flask or FastAPI application is
+        flattened into routes before it is mounted.
         """
-        if not isinstance(router, Router):
-            raise TypeError("include() expects a Router")
+        router = _as_router(router)
         if not hasattr(self, "router") or self.router is None:
             if prefix:
                 self.router = Router()

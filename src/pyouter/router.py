@@ -49,7 +49,12 @@ class Router(object):
             if policy not in _POLICIES:
                 raise ValueError(f"policy must be one of {', '.join(_POLICIES)}")
         self.policy = policy
-        self.route = dict(routes)
+        self.kind = "router"
+        self.origin = "cli"
+        self.framework = None
+        self.route = {}
+        for key, value in routes.items():
+            self.route[key] = _adopt(value)
 
     def include(self, router, prefix=None):
         """Mount another router's routes on this one.
@@ -58,9 +63,9 @@ class Router(object):
         name that is already present is an error. The included router's own
         policy is not copied. With ``prefix``, that router is placed at the
         name; if the name is already a router, the routes are merged into it.
+        A Flask or FastAPI application is flattened into routes first.
         """
-        if not isinstance(router, Router):
-            raise TypeError("include() expects a Router")
+        router = _as_router(router)
         if prefix:
             current = self.route.get(prefix)
             if current is None:
@@ -198,10 +203,45 @@ class Router(object):
                 # 递归打印子树
                 next_prefix = prefix + ("    " if is_last_item else "│   ")
                 value._print_subtree(next_prefix, is_last_item)
+            elif getattr(value, "kind", None) == "web":
+                print(f"{prefix}{connector}{key} ({value.method} {value.rule})")
             else:
                 # 叶子节点
                 func_name = value.__name__ if hasattr(value, '__name__') else type(value).__name__
                 print(f"{prefix}{connector}{key} ({func_name})")
+
+
+def node_kind(node):
+    """Classify a route node.
+
+    ``cli`` is a command function or an object with ``run``. ``router`` is a
+    router written in Python. ``web`` is a Flask or FastAPI endpoint, or a
+    router produced by flattening one of those applications.
+    """
+    if isinstance(node, Router):
+        if getattr(node, "origin", None) == "web":
+            return "web"
+        return "router"
+    if getattr(node, "kind", None) == "web":
+        return "web"
+    return "cli"
+
+
+def _adopt(value):
+    from .flatten import adopt
+    return adopt(value)
+
+
+def _as_router(value):
+    if isinstance(value, Router):
+        return value
+    adopted = _adopt(value)
+    if isinstance(adopted, Router):
+        return adopted
+    raise TypeError(
+        "expected a Router or a Flask/FastAPI application, "
+        f"got {type(value).__name__}"
+    )
 
 
 def _should_run(ctx):

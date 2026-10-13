@@ -155,7 +155,14 @@ PAGE = r"""<!DOCTYPE html>
   }
   .run-mini:hover { background: #f8ead6; }
   .tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tree-kind { color: var(--faint); font-size: 11px; }
+  .tree-kind {
+    color: var(--faint);
+    font-size: 11px;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .dot {
     width: 8px;
     height: 8px;
@@ -380,7 +387,24 @@ PAGE = r"""<!DOCTYPE html>
 <script>
 const BOOT = /*__BOOT__*/null || {};
 const STATUS_LABEL = {idle: "空闲", pending: "等待", running: "运行中", success: "成功", error: "失败", cancelled: "已取消"};
-const KIND_LABEL = {router: "路由", function: "函数", object: "对象"};
+const KIND_LABEL = {router: "路由", function: "函数", object: "对象", web: "接口"};
+function httpLabel(node) {
+  if (!node || node.kind !== "web" || !node.rule) return "";
+  return ((node.method || "") + " " + node.rule).trim();
+}
+function kindText(node) {
+  if (!node) return "";
+  const http = httpLabel(node);
+  if (http) return http;
+  if (node.route_type === "web" && node.kind === "router") return "服务";
+  return KIND_LABEL[node.kind] || node.kind || "";
+}
+function kindName(node) {
+  if (!node) return "";
+  if (node.kind === "web") return KIND_LABEL.web;
+  if (node.route_type === "web" && node.kind === "router") return "服务";
+  return KIND_LABEL[node.kind] || node.kind || "";
+}
 const state = {tree: null, nodes: {}, selected: "", seq: 0, filter: "", expanded: new Set(), script: BOOT.script || "pyouter"};
 
 function h(tag, props, kids) {
@@ -531,7 +555,7 @@ function renderTreeNode(node, depth, filter) {
     role: "treeitem",
     "data-path": node.path,
     "aria-selected": state.selected === node.path ? "true" : "false",
-    title: (node.path || "(root)") + " · 单击查看，双击执行",
+    title: (node.path || "(root)") + (httpLabel(node) ? " · " + httpLabel(node) : "") + " · 单击查看，双击执行",
     onclick: () => select(node.path),
     ondblclick: (event) => {
       if (event.target.closest && event.target.closest("button")) return;
@@ -555,7 +579,7 @@ function renderTreeNode(node, depth, filter) {
     }),
     h("span", {class: "dot", "data-status": status}),
     h("span", {class: "tree-name", text: node.name || "(root)"}),
-    h("span", {class: "tree-kind", text: KIND_LABEL[node.kind] || node.kind || ""}),
+    h("span", {class: "tree-kind", text: kindText(node)}),
     h("button", {
       class: "run-mini",
       type: "button",
@@ -639,7 +663,7 @@ function renderCard(node, depth) {
         text: "▶",
       }),
     ]),
-    h("div", {class: "card-meta", text: (KIND_LABEL[node.kind] || "") + (node.target ? " · " + node.target : "")}),
+    h("div", {class: "card-meta", text: (kindName(node) || "") + (node.target ? " · " + node.target : "")}),
   ]);
   const children = node.children || [];
   if (children.length && depth < 2) {
@@ -718,7 +742,7 @@ function renderMain(fromSelect) {
     h("div", {class: "title-row"}, [
       h("h1", {text: node.name || "(root)"}),
       h("div", {class: "badges"}, [
-        h("span", {class: "pill", text: KIND_LABEL[node.kind] || node.type}),
+        h("span", {class: "pill", text: kindName(node) || node.type}),
         h("span", {class: "pill " + status, text: STATUS_LABEL[status] || status}),
       ]),
     ]),

@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 from pyouter.context import Context, Hooks
 from pyouter.errors import NotFound, NotInit
-from pyouter.router import Router, execute, walk
+from pyouter.router import Router, execute, node_kind, walk
 from pyouter.web_page import render_page
 
 current_log_path = contextvars.ContextVar("pyouter_web_log_path", default=None)
@@ -42,7 +42,26 @@ def _overlaps(left, right):
 
 def describe(node):
     if isinstance(node, Router):
-        return {"kind": "router", "target": "Router", "signature": "", "doc": ""}
+        target = "Router"
+        if getattr(node, "origin", None) == "web":
+            target = getattr(node, "framework", None) or "web"
+        return {"kind": "router", "target": target, "signature": "", "doc": ""}
+
+    if getattr(node, "kind", None) == "web":
+        endpoint = getattr(node, "endpoint", None)
+        method = getattr(node, "method", "") or ""
+        rule = getattr(node, "rule", "") or ""
+        try:
+            signature = str(inspect.signature(endpoint)) if endpoint is not None else ""
+        except (TypeError, ValueError):
+            signature = ""
+        doc = getattr(node, "doc", None) or ""
+        return {
+            "kind": "web",
+            "target": f"{method} {rule}".strip(),
+            "signature": signature,
+            "doc": doc,
+        }
 
     if inspect.isfunction(node) or inspect.ismethod(node):
         target = getattr(node, "__name__", "function")
@@ -83,6 +102,9 @@ def build_tree(router):
             "path": path,
             "type": "router" if isinstance(node, Router) else "action",
             "kind": info["kind"],
+            "route_type": node_kind(node),
+            "method": getattr(node, "method", "") or "",
+            "rule": getattr(node, "rule", "") or "",
             "target": info["target"],
             "signature": info["signature"],
             "doc": info["doc"],
