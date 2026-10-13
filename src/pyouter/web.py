@@ -32,6 +32,14 @@ def _console(message):
     stream.flush()
 
 
+def _under(parent, child):
+    if parent == child:
+        return False
+    if parent == "":
+        return child != ""
+    return child.startswith(parent + ".")
+
+
 def _overlaps(left, right):
     if left == right:
         return True
@@ -44,7 +52,11 @@ def describe(node):
     if isinstance(node, Router):
         target = "Router"
         if getattr(node, "origin", None) == "web":
-            target = getattr(node, "framework", None) or "web"
+            address = getattr(node, "address", None)
+            if getattr(node, "serves", False) and address is not None:
+                target = address.base_url
+            else:
+                target = getattr(node, "framework", None) or "web"
         return {"kind": "router", "target": target, "signature": "", "doc": ""}
 
     if getattr(node, "kind", None) == "web":
@@ -149,11 +161,19 @@ class RunStore:
             for path, _node in walk(router, ""):
                 self.nodes[path] = NodeState(path=path)
 
-    def reserve(self, root, paths):
+    def reserve(self, root, paths, live_services=None):
+        live = set(live_services or ())
         with self.lock:
             for rec in self.nodes.values():
-                if rec.status in ("running", "pending") and _overlaps(rec.path, root):
-                    return False
+                if rec.status not in ("running", "pending") or not _overlaps(rec.path, root):
+                    continue
+                # A live web service occupies its own node. Requests to its
+                # routes still run, and a request does not block service startup.
+                if rec.path in live and _under(rec.path, root):
+                    continue
+                if root in live and _under(root, rec.path):
+                    continue
+                return False
             for path in paths:
                 rec = self.nodes[path]
                 rec.status = "pending"
@@ -373,6 +393,7 @@ class WebBridge:
         self.contexts = {}
         self.cancel_requested = set()
         self.tasks_lock = threading.Lock()
+        self._owns_loop = True
         self.hooks = self._make_hooks()
         self._stdout = None
         self._stderr = None
@@ -397,6 +418,16 @@ class WebBridge:
             sys.stderr = self._stderr
         self._capture_on = False
 
+    def _live_service_paths(self):
+        return [path for path, node in walk(self.router, "") if getattr(node, "serves", False)]
+
+    def _reserved_paths(self, node, norm):
+        # Starting a web service, or naming one of its route groups, must not
+        # mark every endpoint busy. Those endpoints are requests to the service.
+        if getattr(node, "serves", False) or getattr(node, "origin", None) == "web":
+            return [norm]
+        return [item_path for item_path, _node in walk(node, norm)]
+
     def resolve(self, path):
         raw = "" if path is None else str(path).strip()
         if raw in ("", ".", "/"):
@@ -411,13 +442,19 @@ class WebBridge:
         return hooks
 
     def _on_before(self, event):
-        if event["role"] not in ("fanout", "action"):
+        if event["role"] not in ("fanout", "action", "serve", "group"):
             return
         path = event["path"]
         event["token"] = current_log_path.set(path)
         self.store.mark_running(path)
         node = event["node"]
-        if event["role"] == "fanout":
+        if event["role"] == "serve":
+            url = node.address.base_url if getattr(node, "address", None) else ""
+            self.store.log(path, "meta", f"启动 web 服务 {url}")
+        elif event["role"] == "group":
+            url = node.address.base_url if getattr(node, "address", None) else ""
+            self.store.log(path, "meta", f"路由分组 {url}")
+        elif event["role"] == "fanout":
             count = len(node.route) if isinstance(node, Router) else 0
             self.store.log(path, "meta", f"开始执行路由，共 {count} 个子节点")
         else:
@@ -425,7 +462,7 @@ class WebBridge:
             self.store.log(path, "meta", f"开始执行 {info['target']}")
 
     def _on_after(self, event):
-        if event["role"] not in ("fanout", "action"):
+        if event["role"] not in ("fanout", "action", "serve", "group"):
             return
         path = event["path"]
         result = event["result"]
@@ -466,8 +503,8 @@ class WebBridge:
             node, norm = self.resolve(path)
         except NotFound:
             return 404, {"ok": False, "error": f"路径不存在: {path}"}
-        paths = [item_path for item_path, _node in walk(node, norm)]
-        if not self.store.reserve(norm, paths):
+        paths = self._reserved_paths(node, norm)
+        if not self.store.reserve(norm, paths, self._live_service_paths()):
             return 409, {"ok": False, "error": "该节点或上下级节点正在执行"}
         with self.tasks_lock:
             self.cancel_requested.discard(norm)
@@ -503,8 +540,8 @@ class WebBridge:
     async def execute_path(self, path):
         """Run a path on the current event loop. Used by tests and the server."""
         node, norm = self.resolve(path)
-        paths = [item_path for item_path, _node in walk(node, norm)]
-        if not self.store.reserve(norm, paths):
+        paths = self._reserved_paths(node, norm)
+        if not self.store.reserve(norm, paths, self._live_service_paths()):
             raise RuntimeError("该节点或上下级节点正在执行")
         await self._execute_reserved(node, norm)
 
@@ -547,17 +584,24 @@ class WebBridge:
             with self.tasks_lock:
                 self.cancel_requested.discard(owner)
 
-    def start(self):
+    def start(self, loop=None):
+        """Bind the page. ``loop`` reuses the caller's event loop."""
         self.install_capture()
         try:
-            self.loop = asyncio.new_event_loop()
-            self.loop_thread = threading.Thread(
-                target=self._run_loop,
-                name="pyouter-web-loop",
-                daemon=True,
-            )
-            self.loop_thread.start()
-            asyncio.run_coroutine_threadsafe(asyncio.sleep(0), self.loop).result(timeout=5)
+            if loop is None:
+                self._owns_loop = True
+                self.loop = asyncio.new_event_loop()
+                self.loop_thread = threading.Thread(
+                    target=self._run_loop,
+                    name="pyouter-web-loop",
+                    daemon=True,
+                )
+                self.loop_thread.start()
+                asyncio.run_coroutine_threadsafe(asyncio.sleep(0), self.loop).result(timeout=5)
+            else:
+                self._owns_loop = False
+                self.loop = loop
+                self.loop_thread = None
             self.httpd = ReuseHTTPServer((self.host, self.port), partial(Handler, bridge=self))
             self.port = self.httpd.server_address[1]
             self.http_thread = threading.Thread(
@@ -595,7 +639,7 @@ class WebBridge:
         if self.http_thread is not None:
             self.http_thread.join(timeout=3)
             self.http_thread = None
-        if self.loop is not None and self.loop.is_running():
+        if self._owns_loop and self.loop is not None and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.loop.stop)
         if self.loop_thread is not None:
             self.loop_thread.join(timeout=3)

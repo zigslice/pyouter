@@ -34,22 +34,24 @@ class App(object):
         if not hasattr(self, "router") or self.router is None:
             raise NotInit("self.router in App")
     
-    def use(self, router: Router):
+    def use(self, router: Router, host=None, port=None):
         """Replace the application's router.
 
         A Flask or FastAPI application is flattened into routes first.
+        ``host`` and ``port`` are where that service listens.
         """
-        self.router = _as_router(router)
+        self.router = _as_router(router, host=host, port=port)
         return self
 
-    def include(self, router: Router, prefix=None):
+    def include(self, router: Router, prefix=None, host=None, port=None):
         """Mount ``router`` on the application router.
 
         The first call sets the router. Later calls merge routes. ``prefix``
         mounts them under that name. A Flask or FastAPI application is
-        flattened into routes before it is mounted.
+        flattened into routes before it is mounted. ``host`` and ``port``
+        are where that service listens.
         """
-        router = _as_router(router)
+        router = _as_router(router, host=host, port=port)
         if not hasattr(self, "router") or self.router is None:
             if prefix:
                 self.router = Router()
@@ -65,10 +67,29 @@ class App(object):
         return self
 
     def _context(self):
+        return Context(self.config, self.options, self.executor, self._hooks(self.options))
+
+    def _hooks(self, options):
         hooks = Hooks()
-        hooks.before.append(_view_hook(self.options))
+        hooks.before.append(_view_hook(options))
         hooks.on_error.append(_cli_error_hook)
-        return Context(self.config, self.options, self.executor, hooks)
+        return hooks
+
+    async def execute_options(self, options):
+        """Execute ``options.actions`` and return the process exit code."""
+        ctx = Context(self.config, options, self.executor, self._hooks(options))
+        node_result = await self.router.dispatch("", options.actions, 0, ctx)
+        self.result = RunResult(node_result)
+        return 0 if node_result.ok else 1
+
+    async def serve_root(self):
+        """Start the root when the whole application is a web service."""
+        if not getattr(self.router, "serves", False):
+            return 0
+        ctx = Context(self.config, self.options, self.executor, self._hooks(self.options))
+        node_result = await self.router.dispatch("", "", 0, ctx)
+        self.result = RunResult(node_result)
+        return 0 if node_result.ok else 1
 
     def web(self, host="127.0.0.1", port=8765, open_browser=True, focus=None):
         """Start the local web ui for this app's router."""
@@ -98,10 +119,19 @@ class App(object):
         if self.config is None:
             raise NotInit("self.config in App")
         
-        if self.options is None:
+        cli = self.options is None
+        if cli:
             self.options = self.opt_parser.parse_args()
             
         self.router.context(self.config, self.options, self.executor)
+
+        # A command typed at the shell routes into the process started by
+        # ``python app.py``. A caller that already set ``options`` is inside
+        # that process and executes here.
+        if cli:
+            from .runtime import route_cli
+            if route_cli(self):
+                return self
 
         if getattr(self.options, 'web', False):
             self.web(
@@ -125,13 +155,14 @@ class App(object):
             for task in self.router.tasks():
                 print(task)
         else:
-            node_result = asyncio.run(
-                self.router.dispatch("", self.options.actions, 0, self._context())
-            )
-            self.result = RunResult(node_result)
-            if not node_result.ok:
-                raise SystemExit(self.result.exit_code)
-        
+            try:
+                code = asyncio.run(self.execute_options(self.options))
+            except KeyboardInterrupt:
+                print("\n[pyouter] stopped")
+                return self
+            if code:
+                raise SystemExit(code)
+
         return self
 
 
@@ -147,6 +178,10 @@ def _view_hook(options):
             label = "router"
         elif role == "fanout":
             label = "router2"
+        elif role == "serve":
+            label = "service"
+        elif role == "group":
+            label = "web"
         elif role == "action":
             label = "action"
         else:
@@ -157,7 +192,7 @@ def _view_hook(options):
 
 
 def _cli_error_hook(event):
-    if event.get("role") != "action":
+    if event.get("role") not in ("action", "serve"):
         return
     traceback_text = event.get("traceback")
     if traceback_text:
