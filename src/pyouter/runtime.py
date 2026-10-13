@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -101,7 +102,12 @@ def route_cli(app):
 
     Inspecting the tree (``--tasks``, ``--tree``) stays in the command
     process. Every execution goes to the running pyouter process.
+    ``PYOUTER_INSIDE`` serves the tree mounted inside a container.
     """
+    inside = os.environ.get("PYOUTER_INSIDE")
+    if inside:
+        from .inside import install
+        install(app, inside)
     options = app.options
     if getattr(options, "worker", False):
         if live_record() is None:
@@ -127,6 +133,9 @@ def route_cli(app):
         return True
     if live_record() is not None:
         print("pyouter already running")
+        return True
+    if inside:
+        Runtime(app).serve_inside()
         return True
     Runtime(app).serve(web=False)
     return True
@@ -307,11 +316,11 @@ class Runtime:
         self._stderr = None
         self.forwards = True
 
-    def serve(self, web=False):
+    def serve(self, web=False, host="127.0.0.1", port=0):
         """Bind the command socket and block until Ctrl+C."""
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(("127.0.0.1", 0))
+        self.sock.bind((host, port))
         self.sock.listen(32)
         port = self.sock.getsockname()[1]
         if not claim_record(port):
@@ -322,6 +331,7 @@ class Runtime:
         self._boot_loop()
         from .segment import SegmentBoard
         SegmentBoard.for_script().register(os.getpid(), port)
+        self._spawn_inside_workers()
         self._install_streams()
         bridge = None
         threading.Thread(target=self._accept, name="pyouter-accept", daemon=True).start()
@@ -355,6 +365,25 @@ class Runtime:
             if self.loop_thread is not None:
                 self.loop_thread.join(timeout=3)
             self._restore_streams()
+
+    def serve_inside(self):
+        """Serve the container's tree and start the pool inside this process."""
+        self._inside_workers = int(os.environ.get("PYOUTER_INSIDE_WORKERS", "1") or "1")
+        port = int(os.environ.get("PYOUTER_INSIDE_PORT", "7711") or "7711")
+        self.serve(web=False, host="0.0.0.0", port=port)
+
+    def _spawn_inside_workers(self):
+        count = getattr(self, "_inside_workers", 1)
+        if count <= 1:
+            return
+        for _ in range(count - 1):
+            subprocess.Popen(
+                [sys.executable, sys.argv[0], "--worker"],
+                env=os.environ.copy(),
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
 
     def serve_worker(self):
         """Join the pools of the running pyouter process and take assigned paths."""
@@ -543,8 +572,20 @@ class Runtime:
             and not getattr(options, "tree", False)
             and not getattr(options, "tasks", False)
         ):
+            from .inside import forward_plan
             from .segment import SegmentBoard
             board = SegmentBoard.for_script()
+            plan = forward_plan(self.app.router, options.actions)
+            if plan is not None:
+                gate, relative, inner_port = plan
+                owner = board.owner(gate)
+                me = str(os.getpid())
+                if owner and owner != me:
+                    port = board.port(owner)
+                    if port:
+                        return await asyncio.to_thread(relay, port, argv)
+                if owner == me:
+                    return await asyncio.to_thread(relay, inner_port, [relative])
             chosen = board.assign(self.app.router, options.actions, os.getpid())
             if chosen and chosen != str(os.getpid()):
                 port = board.port(chosen)

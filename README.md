@@ -228,8 +228,9 @@ from pyouter.docker import Command, Container, Service
 from pyouter.router import Router
 
 box = Container(
-    "alpine:3",
+    "python:3.12-slim",
     name="tools",
+    workers=2,
     ports=("8080:80",),
     routes=Router(
         c=Router(
@@ -254,9 +255,9 @@ python app.py a.b.c.d
 python app.py a.b.api.health
 ```
 
-`python app.py a.b` starts the container and waits. `a.b.c.d` is `docker exec tools echo deep` in that container, then the command exits. `a.b.api.health` sends `GET /health` to the published address. Both fail, and say to start the container, when `a.b` is not running. Running `a.b` again while it is running reports that and leaves the container in place. Stopping the `a.b` command removes the container it started. The pyouter process keeps running.
+`python app.py a.b` starts the container and waits. The container's main process is another pyouter, serving the `routes` you passed. `workers=2` starts that many pyouter processes inside the container. `a.b.c.d` is handed to that inner pyouter, which runs `echo deep` on one of those processes. `a.b.api.health` sends `GET /health` to the published address. Both fail, and say to start the container, when `a.b` is not running. Running `a.b` again while it is running reports that and leaves the container in place. Stopping the `a.b` command removes the container it started. The outer pyouter process keeps running.
 
-`command=("nginx", "-g", "daemon off;")` replaces the default `sleep infinity` when the image itself is the service. A nested router such as `c` is only another path segment.
+The image needs Python. pyouter mounts its source and the application script and starts them; you do not write a Dockerfile. `command=("nginx", "-g", "daemon off;")` replaces the inner runtime when the image itself is the service. A nested router such as `c` is only another path segment.
 
 A Compose file is the same kind of node, one level up. Each service in the file is a child. Commands and HTTP routes are added onto a service by name. Mount the project with a prefix; that prefix is what starts the stack. A `.yml` file needs PyYAML. A `.json` Compose file does not.
 
@@ -325,26 +326,30 @@ Mount the host with a prefix, or place it under a name as `b` is placed above. `
 
 ## segments
 
-The route tree is one Python object. A container, a Compose project, an SSH host, or a web service is a boundary in that tree. The `routes` you pass to it are the next segment. Starting the boundary opens the segment. Stopping it closes the segment. You do not write a Dockerfile, copy pyouter into an image, or start a second program inside the host. A command under a container is `docker exec`. A command under SSH is `ssh`. An HTTP route is one request to the published address.
+The route tree is one Python object. A container, a Compose project, an SSH host, or a web service is a boundary in that tree. The `routes` on a container are a second pyouter tree. Starting the container opens that tree inside it and starts its own pool there.
 
 ```text
-outer pool          any worker
+outer pool                 any worker on the host
 a
-a.b                 the worker that claimed the container
-a.b.c
-a.b.c.d             any worker in the a.b pool, via docker exec
-a.b.edge            the worker that claimed the SSH host
-a.b.edge.e          any worker in the a.b.edge pool, via ssh
+a.b                        the one worker that owns the container
+        |
+        +-- inside the container, a new pyouter
+              c
+              c.d          any worker of the pool inside the container
+              edge         the inner worker that owns the SSH host
+              edge.e       any worker of the pool under that host
 ```
 
-`python app.py` is the first worker. Each `python app.py --worker` joins the outer pool, and joins a segment when that host becomes ready. A function in an open segment goes to any of those workers. The boundary node stays on the worker that claimed it. An object with `run` stays on the worker that first ran it, so `self` is still one object. A call into a segment whose host is not running is delivered anyway, and the command reports that the host is not running.
+A call such as `a.b.c.d` reaches the worker that owns `a.b`. That worker gives the remaining path `c.d` to the pyouter listening inside the container. The inner pool chooses which of its processes runs `c.d`. Those processes are inside the container; the outer `--worker` processes are not.
+
+`python app.py` is the first outer worker. `python app.py --worker` joins the outer pool. `workers=` on the container is the size of the pool inside it. An object with `run` stays on the worker that first ran it. A call into a container that is not running fails and tells you to start that node.
 
 ## What's new
 
 ### 0.8.0
 
-* a container, Compose project, SSH host, or web service opens the next segment when it starts
-* `python app.py --worker` joins those pools; the boundary stays on one worker and the interior is shared
+* starting a container boots the `routes` tree as a pyouter inside it, with its own worker pool
+* a call under that container is handed to the inner pyouter; `python app.py --worker` joins the outer pool
 
 ### 0.7.0
 

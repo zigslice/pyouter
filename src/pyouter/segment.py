@@ -6,10 +6,10 @@ segment. Starting the boundary opens that segment; stopping it closes the
 segment. Workers joined to a segment can run its leaves. The boundary node
 itself stays on the worker that claimed it.
 
-The inner segment is not a second program. Nothing is written into an image
-and nothing is started by hand inside the host. ``routes=`` is the subtree,
-and the host transport (``docker exec``, ``ssh``, or one HTTP call) is how a
-worker enters it.
+A container's ``routes`` are started as another pyouter inside that
+container. The pool inside the container is separate from the pool outside
+it. A call that crosses the container is delivered to the inner pyouter,
+which then chooses one of its own workers.
 """
 
 import contextvars
@@ -198,6 +198,17 @@ class SegmentBoard:
         with self._locked():
             data = self._load()
             self._drop_dead(data)
+            from .inside import enclosing_docker
+            gate = enclosing_docker(router, path)
+            if gate is not None:
+                if gate in data["open"]:
+                    owner = data["owners"].get(gate)
+                    if owner and owner in data["workers"]:
+                        self._save(data)
+                        return owner
+                chosen = self._pick(data, _ROOT) or me
+                self._save(data)
+                return chosen
             if place.bound or _sticky(node):
                 key = place.boundary if place.bound else path
                 owner = data["owners"].get(key)

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import signal
 import subprocess
@@ -62,6 +63,7 @@ def write_fake_docker(directory):
             name = argv[argv.index("--name") + 1]
             data = load()
             data[name] = {{"running": True}}
+            data.setdefault("runs", []).append(argv)
             save(data)
             sys.stdout.write(name + "\\n")
             sys.exit(0)
@@ -133,15 +135,12 @@ class SegmentTests(unittest.TestCase):
                 board.ready("a.b", owner)
                 self.assertTrue(board.is_open("a.b"))
                 self.assertEqual(set(board.members("a.b")), {str(first.pid), str(second.pid)})
-                inner = {board.assign(root, "a.b.c.d", first.pid) for _ in range(6)}
-                self.assertEqual(inner, {str(first.pid), str(second.pid)})
+                self.assertEqual(
+                    {board.assign(root, "a.b.c.d", first.pid) for _ in range(4)},
+                    {owner},
+                )
+                self.assertEqual(board.assign(root, "a.b.edge.e", second.pid), owner)
                 self.assertEqual(board.assign(root, "a.b", first.pid), owner)
-
-                nested = board.assign(root, "a.b.edge", first.pid)
-                self.assertEqual(board.assign(root, "a.b.edge", second.pid), nested)
-                board.ready("a.b.edge", nested)
-                deep = {board.assign(root, "a.b.edge.e", first.pid) for _ in range(6)}
-                self.assertEqual(deep, {str(first.pid), str(second.pid)})
 
                 board.down("a.b", owner)
                 self.assertFalse(board.is_open("a.b"))
@@ -177,9 +176,95 @@ class SegmentTests(unittest.TestCase):
             asyncio.run(main())
             self.assertFalse(board.is_open("box"))
             self.assertIsNone(board.owner("box"))
+            runs = json.loads((Path(directory) / "state.json").read_text())["runs"]
+            flat = " ".join(runs[0])
+            self.assertIn("PYOUTER_INSIDE=box", flat)
+            self.assertIn("PYOUTER_INSIDE_WORKERS=2", flat)
+            self.assertIn("python", runs[0])
 
 
 class WorkerPoolTests(unittest.TestCase):
+    def test_inside_pool_spreads_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app_path = Path(directory) / "app.py"
+            app_path.write_text(textwrap.dedent("""
+                import os
+                from pyouter.app import App
+                from pyouter.router import Router
+
+                def ping(ctx):
+                    print(f"fn={os.getpid()}")
+
+                app = App(config={})
+                app.include(Router(ping=ping))
+                app.run()
+            """).lstrip("\n"), encoding="utf-8")
+            previous_home = os.environ.get("HOME")
+            os.environ["HOME"] = directory
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            env["PYOUTER_INSIDE"] = "."
+            env["PYOUTER_INSIDE_WORKERS"] = "2"
+            env["PYOUTER_INSIDE_PORT"] = "0"
+            env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1]) + os.pathsep + env.get("PYTHONPATH", "")
+            runtime = subprocess.Popen(
+                [sys.executable, str(app_path)],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
+            )
+            log = []
+
+            def drain():
+                for line in runtime.stdout:
+                    log.append(line)
+
+            threading.Thread(target=drain, daemon=True).start()
+            board = SegmentBoard(Path(directory) / ".pyouter" / "segments" / script_digest(str(app_path)))
+            try:
+                for _ in range(100):
+                    if len(board.members("")) >= 2:
+                        break
+                    if runtime.poll() is not None:
+                        self.fail("".join(log) or "inner runtime exited")
+                    time.sleep(0.05)
+                else:
+                    self.fail("inner pool did not start: " + "".join(log))
+                pids = set()
+                for _ in range(8):
+                    result = subprocess.run(
+                        [sys.executable, str(app_path), "ping"],
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    pids.update(
+                        line.split("=", 1)[1].strip()
+                        for line in result.stdout.splitlines()
+                        if line.startswith("fn=")
+                    )
+                self.assertGreaterEqual(len(pids), 2)
+            finally:
+                for member in list(board.members("")):
+                    if int(member) != runtime.pid:
+                        try:
+                            os.kill(int(member), signal.SIGTERM)
+                        except OSError:
+                            pass
+                if runtime.poll() is None:
+                    os.kill(runtime.pid, signal.SIGINT)
+                    runtime.wait(timeout=5)
+                if runtime.stdout is not None:
+                    runtime.stdout.close()
+                if previous_home is None:
+                    os.environ.pop("HOME", None)
+                else:
+                    os.environ["HOME"] = previous_home
+
     def test_workers_share_functions_and_pin_objects(self):
         with tempfile.TemporaryDirectory() as directory:
             app_path = Path(directory) / "app.py"
