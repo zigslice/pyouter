@@ -442,6 +442,8 @@ async def serve_service(node, ctx):
     if listening(node.address):
         url = node.address.base_url
         print(f"web service already running at {url}")
+        from .segment import host_is_ready
+        host_is_ready()
         return {"status": "running", "url": url}
 
     handle = _ServerHandle(node)
@@ -454,10 +456,15 @@ async def serve_service(node, ctx):
                 return {"status": "running", "url": url}
             raise RuntimeError(f"cannot bind {node.address.base_url}: {handle.errors[0]}")
         print(f"web service {node.address.base_url}")
-        while handle.thread is not None and handle.thread.is_alive():
-            if ctx is not None and getattr(ctx, "cancelled", False):
-                break
-            await asyncio.sleep(0.05)
+        from .segment import host_is_down, host_is_ready
+        host_is_ready()
+        try:
+            while handle.thread is not None and handle.thread.is_alive():
+                if ctx is not None and getattr(ctx, "cancelled", False):
+                    break
+                await asyncio.sleep(0.05)
+        finally:
+            host_is_down()
     finally:
         await asyncio.to_thread(handle.stop)
     if ctx is not None and getattr(ctx, "cancelled", False):

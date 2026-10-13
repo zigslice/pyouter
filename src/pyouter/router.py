@@ -146,9 +146,22 @@ class Router(object):
             ctx = Context(config, options, executor)
 
         if (command is None or command == "") and getattr(self, "serves", False):
-            return await execute(self, _qualify(pre, ""), depth, ctx)
+            from .segment import bind_path, reset_path
+            token = bind_path(_qualify(pre, ""))
+            try:
+                return await execute(self, _qualify(pre, ""), depth, ctx)
+            finally:
+                reset_path(token)
 
         node, rel, hops = self.resolve(command)
+        from .segment import bind_path, reset_path
+        path_token = bind_path(_qualify(pre, rel))
+        try:
+            return await self._dispatch_resolved(pre, node, rel, hops, depth, ctx)
+        finally:
+            reset_path(path_token)
+
+    async def _dispatch_resolved(self, pre, node, rel, hops, depth, ctx):
         for hop_path, hop_depth, hop_node in hops:
             await ctx.hooks.emit("before", {
                 "path": _qualify(pre, hop_path),
@@ -325,7 +338,12 @@ async def _execute_service(node, path, depth, ctx):
     event = _event(node, path, depth, "serve")
     await ctx.hooks.emit("before", event)
     try:
-        value = await serve_service(node, ctx)
+        from .segment import bind_path, reset_path
+        token = bind_path(path)
+        try:
+            value = await serve_service(node, ctx)
+        finally:
+            reset_path(token)
     except asyncio.CancelledError:
         event["result"] = NodeResult(path, "cancelled")
         await ctx.hooks.emit("after", event)
@@ -349,7 +367,12 @@ async def _execute_container(node, path, depth, ctx):
     event = _event(node, path, depth, "container")
     await ctx.hooks.emit("before", event)
     try:
-        value = await start_container(node, ctx)
+        from .segment import bind_path, reset_path
+        token = bind_path(path)
+        try:
+            value = await start_container(node, ctx)
+        finally:
+            reset_path(token)
     except asyncio.CancelledError:
         event["result"] = NodeResult(path, "cancelled")
         await ctx.hooks.emit("after", event)
@@ -373,7 +396,12 @@ async def _execute_ssh(node, path, depth, ctx):
     event = _event(node, path, depth, "ssh")
     await ctx.hooks.emit("before", event)
     try:
-        value = await start_ssh(node, ctx)
+        from .segment import bind_path, reset_path
+        token = bind_path(path)
+        try:
+            value = await start_ssh(node, ctx)
+        finally:
+            reset_path(token)
     except asyncio.CancelledError:
         event["result"] = NodeResult(path, "cancelled")
         await ctx.hooks.emit("after", event)
@@ -397,7 +425,12 @@ async def _execute_compose(node, path, depth, ctx):
     event = _event(node, path, depth, "compose")
     await ctx.hooks.emit("before", event)
     try:
-        value = await start_compose(node, ctx)
+        from .segment import bind_path, reset_path
+        token = bind_path(path)
+        try:
+            value = await start_compose(node, ctx)
+        finally:
+            reset_path(token)
     except asyncio.CancelledError:
         event["result"] = NodeResult(path, "cancelled")
         await ctx.hooks.emit("after", event)

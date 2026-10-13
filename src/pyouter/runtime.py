@@ -103,6 +103,11 @@ def route_cli(app):
     process. Every execution goes to the running pyouter process.
     """
     options = app.options
+    if getattr(options, "worker", False):
+        if live_record() is None:
+            _not_running()
+        Runtime(app).serve_worker()
+        return True
     if getattr(options, "web", False):
         if live_record() is not None:
             print("pyouter already running")
@@ -161,6 +166,46 @@ def call(argv, script=None):
                     sys.stdout.write(message["stdout"])
                     sys.stdout.flush()
                 if "stderr" in message and message["stderr"]:
+                    sys.stderr.write(message["stderr"])
+                    sys.stderr.flush()
+                if "exit" in message:
+                    code = message["exit"]
+                    return code if isinstance(code, int) else 1
+    finally:
+        sock.close()
+
+
+def relay(port, argv):
+    """Run ``argv`` on another worker and copy its output back."""
+    sock = socket.create_connection(("127.0.0.1", int(port)), timeout=5)
+    try:
+        payload = json.dumps(
+            {"argv": [str(item) for item in argv], "assigned": True},
+            ensure_ascii=False,
+        )
+        sock.sendall((payload + "\n").encode("utf-8"))
+        sock.settimeout(None)
+        buf = b""
+        while True:
+            try:
+                chunk = sock.recv(65536)
+            except OSError:
+                return 1
+            if not chunk:
+                return 1
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                if not line:
+                    continue
+                try:
+                    message = json.loads(line.decode("utf-8"))
+                except ValueError:
+                    continue
+                if message.get("stdout"):
+                    sys.stdout.write(message["stdout"])
+                    sys.stdout.flush()
+                if message.get("stderr"):
                     sys.stderr.write(message["stderr"])
                     sys.stderr.flush()
                 if "exit" in message:
@@ -260,6 +305,7 @@ class Runtime:
         self.root_future = None
         self._stdout = None
         self._stderr = None
+        self.forwards = True
 
     def serve(self, web=False):
         """Bind the command socket and block until Ctrl+C."""
@@ -273,14 +319,9 @@ class Runtime:
             print("pyouter already running")
             return
 
-        self.loop = asyncio.new_event_loop()
-        self.loop_thread = threading.Thread(
-            target=self._run_loop,
-            name="pyouter-runtime",
-            daemon=True,
-        )
-        self.loop_thread.start()
-        asyncio.run_coroutine_threadsafe(asyncio.sleep(0), self.loop).result(timeout=5)
+        self._boot_loop()
+        from .segment import SegmentBoard
+        SegmentBoard.for_script().register(os.getpid(), port)
         self._install_streams()
         bridge = None
         threading.Thread(target=self._accept, name="pyouter-accept", daemon=True).start()
@@ -301,6 +342,11 @@ class Runtime:
                 bridge.close()
             release_record()
             try:
+                from .segment import SegmentBoard
+                SegmentBoard.for_script().unregister(os.getpid())
+            except Exception:
+                pass
+            try:
                 self.sock.close()
             except OSError:
                 pass
@@ -310,7 +356,57 @@ class Runtime:
                 self.loop_thread.join(timeout=3)
             self._restore_streams()
 
+    def serve_worker(self):
+        """Join the pools of the running pyouter process and take assigned paths."""
+        self.forwards = False
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(32)
+        port = self.sock.getsockname()[1]
+        self._boot_loop()
+        from .segment import SegmentBoard
+        SegmentBoard.for_script().register(os.getpid(), port)
+        self._install_streams()
+        threading.Thread(target=self._accept, name="pyouter-accept", daemon=True).start()
+        print(f"pyouter worker {os.getpid()}")
+        try:
+            while not self.stopped.is_set():
+                if live_record() is None:
+                    break
+                time.sleep(0.25)
+        except KeyboardInterrupt:
+            print("\n[pyouter] stopped")
+        finally:
+            self.stopped.set()
+            self._cancel_runs()
+            try:
+                SegmentBoard.for_script().unregister(os.getpid())
+            except Exception:
+                pass
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            if self.loop is not None and self.loop.is_running():
+                self.loop.call_soon_threadsafe(self.loop.stop)
+            if self.loop_thread is not None:
+                self.loop_thread.join(timeout=3)
+            self._restore_streams()
+
+    def _boot_loop(self):
+        self.loop = asyncio.new_event_loop()
+        self.loop_thread = threading.Thread(
+            target=self._run_loop,
+            name="pyouter-runtime",
+            daemon=True,
+        )
+        self.loop_thread.start()
+        asyncio.run_coroutine_threadsafe(asyncio.sleep(0), self.loop).result(timeout=5)
+
     def _run_loop(self):
+        from .segment import SegmentBoard, activate
+        activate(SegmentBoard.for_script(), os.getpid())
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
@@ -424,7 +520,7 @@ class Runtime:
                 code = 0 if status in (None, 0) else (status if isinstance(status, int) else 1)
                 return
             try:
-                code = await self.app.execute_options(options)
+                code = await self._execute_or_forward(argv, options)
             except NotFound as exc:
                 print(exc.message, file=sys.stderr)
                 code = 1
@@ -439,6 +535,22 @@ class Runtime:
                 self.tasks.discard(task)
             writer.exit(code)
             _writer_context().reset(token)
+
+    async def _execute_or_forward(self, argv, options):
+        if (
+            self.forwards
+            and options.actions
+            and not getattr(options, "tree", False)
+            and not getattr(options, "tasks", False)
+        ):
+            from .segment import SegmentBoard
+            board = SegmentBoard.for_script()
+            chosen = board.assign(self.app.router, options.actions, os.getpid())
+            if chosen and chosen != str(os.getpid()):
+                port = board.port(chosen)
+                if port:
+                    return await asyncio.to_thread(relay, port, argv)
+        return await self.app.execute_options(options)
 
     def _cancel_runs(self):
         future = self.root_future

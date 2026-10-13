@@ -38,7 +38,8 @@ class Remote:
 class SSH(Router):
     """One SSH host whose commands are child routes.
 
-    ``routes`` is an ordinary router. A :class:`Remote` runs on the host.
+    ``routes`` is the next segment, written in Python. Starting this node
+    opens that segment. A :class:`Remote` runs on the host.
     A :class:`~pyouter.docker.Service` calls an address reached through a
     local forward. Nested routers add path segments, so ``b.c.d`` is node
     ``d`` under group ``c`` on host ``b``.
@@ -130,6 +131,8 @@ async def start_ssh(node, ctx):
     """
     if await asyncio.to_thread(ssh_connected, node):
         print(f"ssh already connected: {node.destination}")
+        from .segment import host_is_ready
+        host_is_ready()
         return {"status": "connected", "host": node.destination}
 
     node._owns = True
@@ -139,6 +142,8 @@ async def start_ssh(node, ctx):
         node._master = proc
         await _wait_until_connected(node, proc)
         print(f"ssh {node.destination}")
+        from .segment import host_is_ready
+        host_is_ready()
         while await asyncio.to_thread(ssh_connected, node):
             if ctx is not None and getattr(ctx, "cancelled", False):
                 break
@@ -149,6 +154,8 @@ async def start_ssh(node, ctx):
         if node._owns:
             await asyncio.to_thread(_disconnect, node)
             node._owns = False
+            from .segment import host_is_down
+            host_is_down()
     if ctx is not None and getattr(ctx, "cancelled", False):
         raise asyncio.CancelledError()
     return {"status": "stopped", "host": node.destination}

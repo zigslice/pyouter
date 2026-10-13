@@ -153,7 +153,7 @@ python app.py hello
 
 `python app.py` starts one process and leaves it running. Every later command routes a node into that process, prints the result, and exits. A function, a router, a web service, and a web endpoint are the same kind of step: the process you started is what executes the node. The command delivers the path.
 
-`python app.py hello` runs `hello` there. The object you mounted keeps its state across commands, because both commands are executed by the same process. A second `python app.py` prints `pyouter already running`. A command issued before that process exists fails and tells you to start it. `--tasks` and `--tree` only read the route tree, so they run in the command itself.
+`python app.py hello` runs `hello` there. An object keeps its state across commands, because those commands stay on the worker that first ran it. A second `python app.py` prints `pyouter already running`. `python app.py --worker` joins the pools as another process. A command issued before the first process exists fails and tells you to start it. `--tasks` and `--tree` only read the route tree, so they run in the command itself.
 
 Calling `run()` after you have set `options` executes in the current process. Tests and embedded callers use that path.
 
@@ -323,7 +323,28 @@ python app.py a.b.api.health
 
 Mount the host with a prefix, or place it under a name as `b` is placed above. `forwards` are `ssh -L` values.
 
+## segments
+
+The route tree is one Python object. A container, a Compose project, an SSH host, or a web service is a boundary in that tree. The `routes` you pass to it are the next segment. Starting the boundary opens the segment. Stopping it closes the segment. You do not write a Dockerfile, copy pyouter into an image, or start a second program inside the host. A command under a container is `docker exec`. A command under SSH is `ssh`. An HTTP route is one request to the published address.
+
+```text
+outer pool          any worker
+a
+a.b                 the worker that claimed the container
+a.b.c
+a.b.c.d             any worker in the a.b pool, via docker exec
+a.b.edge            the worker that claimed the SSH host
+a.b.edge.e          any worker in the a.b.edge pool, via ssh
+```
+
+`python app.py` is the first worker. Each `python app.py --worker` joins the outer pool, and joins a segment when that host becomes ready. A function in an open segment goes to any of those workers. The boundary node stays on the worker that claimed it. An object with `run` stays on the worker that first ran it, so `self` is still one object. A call into a segment whose host is not running is delivered anyway, and the command reports that the host is not running.
+
 ## What's new
+
+### 0.8.0
+
+* a container, Compose project, SSH host, or web service opens the next segment when it starts
+* `python app.py --worker` joins those pools; the boundary stays on one worker and the interior is shared
 
 ### 0.7.0
 

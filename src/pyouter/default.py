@@ -70,4 +70,11 @@ def create_parser(description, tasks="tasks"):
         action="store_true",
     )
 
+    opt_parser.add_argument(
+        "--worker",
+        dest="worker",
+        help="join the running pyouter pools as another worker",
+        action="store_true",
+    )
+
     return opt_parser

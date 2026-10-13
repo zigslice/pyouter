@@ -91,8 +91,10 @@ class Service(Router):
 class Container(Router):
     """A container whose commands and services are child routes.
 
-    ``routes`` is an ordinary router. A :class:`Command` runs inside the
-    container. A :class:`Service` calls a port the container publishes.
+    ``routes`` is the next segment, written in Python. Starting this node
+    opens that segment; the commands and HTTP routes under it are the
+    subtree. A :class:`Command` runs inside the container. A :class:`Service`
+    calls a port the container publishes.
     Nested routers add path segments, so ``b.c.d`` is node ``d`` under
     group ``c`` inside container ``b``.
 
@@ -270,6 +272,8 @@ async def start_container(node, ctx):
     """
     if await asyncio.to_thread(container_running, node):
         print(f"container already running: {node.container_name}")
+        from .segment import host_is_ready
+        host_is_ready()
         return {"status": "running", "container": node.container_name}
 
     if await asyncio.to_thread(_container_exists, node):
@@ -284,6 +288,8 @@ async def start_container(node, ctx):
     try:
         await asyncio.to_thread(_docker, node, argv)
         print(f"container {node.container_name}")
+        from .segment import host_is_ready
+        host_is_ready()
         while await asyncio.to_thread(container_running, node):
             if ctx is not None and getattr(ctx, "cancelled", False):
                 break
@@ -294,6 +300,8 @@ async def start_container(node, ctx):
                 _docker, node, ["rm", "-f", node.container_name], False
             )
             node._owns = False
+            from .segment import host_is_down
+            host_is_down()
     if ctx is not None and getattr(ctx, "cancelled", False):
         raise asyncio.CancelledError()
     return {"status": "stopped", "container": node.container_name}
@@ -307,12 +315,16 @@ async def start_compose(node, ctx):
     """
     if await asyncio.to_thread(project_running, node):
         print(f"compose project already running: {node.project_name}")
+        from .segment import host_is_ready
+        host_is_ready()
         return {"status": "running", "project": node.project_name}
 
     node._owns = True
     try:
         await asyncio.to_thread(_docker, node, [*node._base(), "up", "-d"])
         print(f"compose project {node.project_name}")
+        from .segment import host_is_ready
+        host_is_ready()
         while await asyncio.to_thread(project_running, node):
             if ctx is not None and getattr(ctx, "cancelled", False):
                 break
@@ -321,6 +333,8 @@ async def start_compose(node, ctx):
         if node._owns:
             await asyncio.to_thread(_docker, node, [*node._base(), "down"], False)
             node._owns = False
+            from .segment import host_is_down
+            host_is_down()
     if ctx is not None and getattr(ctx, "cancelled", False):
         raise asyncio.CancelledError()
     return {"status": "stopped", "project": node.project_name}
