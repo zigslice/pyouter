@@ -5,9 +5,10 @@ routes inside it never appeared in the command line, the task list, or the
 local web ui. ``flatten`` reads the application's URL map and turns each HTTP
 route into a leaf.
 
-Running the service node starts that application and leaves it listening.
-Running a leaf sends one request to the address that is already listening.
-It does not boot the application again.
+Running the service node, inside the pyouter process, starts that
+application and leaves it listening. Running a leaf sends one request to
+the address that is already listening. It does not boot the application
+again.
 """
 
 import asyncio

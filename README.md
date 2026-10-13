@@ -76,7 +76,8 @@ class Hello_Sync:
 if __name__=="__main__":
     '''
     Usage:
-        ## execute:
+        ## start pyouter, then route into that process:
+        * python test.py
         * python test.py test.hello.func
         * python test.py test.hello.obj
         * python test.py test
@@ -142,8 +143,19 @@ async def hello(ctx):
 
 app = App(config={"name": "pyouter"})
 app.include(Router(hello=hello))
-app.run()  # python app.py hello
+app.run()
 ```
+
+```shell
+python app.py
+python app.py hello
+```
+
+`python app.py` starts one process and leaves it running. Every later command routes a node into that process, prints the result, and exits. A function, a router, a web service, and a web endpoint are the same kind of step: the process you started is what executes the node. The command delivers the path.
+
+`python app.py hello` runs `hello` there. The object you mounted keeps its state across commands, because both commands are executed by the same process. A second `python app.py` prints `pyouter already running`. A command issued before that process exists fails and tells you to start it. `--tasks` and `--tree` only read the route tree, so they run in the command itself.
+
+Calling `run()` after you have set `options` executes in the current process. Tests and embedded callers use that path.
 
 After a run, `app.result.exit_code` is 1 when a node fails, and `run()` raises `SystemExit`. A context action's return value is `app.result.root.value` when that action is the node that was executed.
 
@@ -161,7 +173,7 @@ python test.py --web --port 9000
 python test.py test.hello --web --no-browser
 ```
 
-The left column is the route tree. The right panel shows the selected node's status, a map of the nearby routes, and the logs captured from that node's standard output and standard error. Click a node to inspect it. Use ▶, double-click, or 执行 to run it. Running a router runs its children, same as the command line.
+`--web` starts the same pyouter process and opens the browser on it. A later `python test.py test.hello.func` routes into that process. The left column is the route tree. The right panel shows the selected node's status, a map of the nearby routes, and the logs captured from that node's standard output and standard error. Click a node to inspect it. Use ▶, double-click, or 执行 to run it. Running a router runs its children, same as the command line.
 
 `app.web()` starts the same page from Python. `--host` defaults to localhost; binding another interface exposes task execution on that interface.
 
@@ -193,19 +205,25 @@ app.run()
 ```
 
 ```shell
+python app.py
 python app.py api
 python app.py api.health
 python app.py api.users.user_id --user-id 7
 python app.py --tasks
 ```
 
-`python app.py api` starts the Flask application and leaves it listening on `127.0.0.1:5000`. That process stays up. A later `python app.py api.health` does not start the application again. It sends `GET /health` to the service that is already listening, then exits. The same is true for `api.users.user_id`, which is `GET /users/<int:user_id>`.
+`python app.py` is the process that stays up. `python app.py api` routes to the service node inside it and waits there while Flask listens on `127.0.0.1:5000`. `python app.py api.health` routes to that endpoint: one `GET /health` against the service already listening in the same process, then the command exits. `api.users.user_id` is `GET /users/<int:user_id>`, routed the same way. `python app.py hello`, for an ordinary function mounted beside the service, is also a route into this process.
 
-A path parameter is taken from an option of the same name, from `options.params`, or from config. Several methods on one path become `get`, `post`, and the other method names. The request returns `status`, `body`, `method`, and `path`. A response of 400 or higher fails the node. If nothing is listening, the route fails and tells you to start the service node. Running the service node again, while it is already listening, reports that and leaves the existing process alone.
+A path parameter is taken from an option of the same name, from `options.params`, or from config. Several methods on one path become `get`, `post`, and the other method names. The request returns `status`, `body`, `method`, and `path`. A response of 400 or higher fails the node. If the service node is not running, the route fails and tells you to start it. Running the service node again, while it is already listening, reports that and leaves the service in place. Stopping the `api` command stops the service. The pyouter process keeps running.
 
 `app.include(service, prefix="api", port=5000)` selects the address. `flatten(service, port=5000)` returns the same router when you want to mount it yourself. A FastAPI application listens on `127.0.0.1:8000` unless you pass a port, and starting it needs `uvicorn`. `GET /users/{user_id}` becomes `users.user_id`.
 
 ## What's new
+
+### 0.4.0
+
+* `python app.py` starts the process that executes every node
+* a later command routes into that process, for a function, a router, or a web route
 
 ### 0.3.1
 

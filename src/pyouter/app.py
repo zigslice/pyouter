@@ -67,10 +67,29 @@ class App(object):
         return self
 
     def _context(self):
+        return Context(self.config, self.options, self.executor, self._hooks(self.options))
+
+    def _hooks(self, options):
         hooks = Hooks()
-        hooks.before.append(_view_hook(self.options))
+        hooks.before.append(_view_hook(options))
         hooks.on_error.append(_cli_error_hook)
-        return Context(self.config, self.options, self.executor, hooks)
+        return hooks
+
+    async def execute_options(self, options):
+        """Execute ``options.actions`` and return the process exit code."""
+        ctx = Context(self.config, options, self.executor, self._hooks(options))
+        node_result = await self.router.dispatch("", options.actions, 0, ctx)
+        self.result = RunResult(node_result)
+        return 0 if node_result.ok else 1
+
+    async def serve_root(self):
+        """Start the root when the whole application is a web service."""
+        if not getattr(self.router, "serves", False):
+            return 0
+        ctx = Context(self.config, self.options, self.executor, self._hooks(self.options))
+        node_result = await self.router.dispatch("", "", 0, ctx)
+        self.result = RunResult(node_result)
+        return 0 if node_result.ok else 1
 
     def web(self, host="127.0.0.1", port=8765, open_browser=True, focus=None):
         """Start the local web ui for this app's router."""
@@ -100,10 +119,19 @@ class App(object):
         if self.config is None:
             raise NotInit("self.config in App")
         
-        if self.options is None:
+        cli = self.options is None
+        if cli:
             self.options = self.opt_parser.parse_args()
             
         self.router.context(self.config, self.options, self.executor)
+
+        # A command typed at the shell routes into the process started by
+        # ``python app.py``. A caller that already set ``options`` is inside
+        # that process and executes here.
+        if cli:
+            from .runtime import route_cli
+            if route_cli(self):
+                return self
 
         if getattr(self.options, 'web', False):
             self.web(
@@ -128,16 +156,13 @@ class App(object):
                 print(task)
         else:
             try:
-                node_result = asyncio.run(
-                    self.router.dispatch("", self.options.actions, 0, self._context())
-                )
+                code = asyncio.run(self.execute_options(self.options))
             except KeyboardInterrupt:
                 print("\n[pyouter] stopped")
                 return self
-            self.result = RunResult(node_result)
-            if not node_result.ok:
-                raise SystemExit(self.result.exit_code)
-        
+            if code:
+                raise SystemExit(code)
+
         return self
 
 

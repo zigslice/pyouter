@@ -293,7 +293,7 @@ class FlattenTest(unittest.TestCase):
             invoke_endpoint(endpoint, ctx)
         self.assertIn("not running", str(caught.exception))
 
-    def test_another_process_reaches_the_same_service(self):
+    def test_commands_route_into_one_process(self):
         port = free_port()
         with tempfile.TemporaryDirectory() as directory:
             app_path = Path(directory) / "app.py"
@@ -302,6 +302,7 @@ class FlattenTest(unittest.TestCase):
                 import os
                 from flask import Flask
                 from pyouter.app import App
+                from pyouter.router import Router
 
                 service = Flask("svc")
 
@@ -311,40 +312,113 @@ class FlattenTest(unittest.TestCase):
                         handle.write(str(os.getpid()) + "\\n")
                     return {{"ok": True}}
 
+                class Counter:
+                    def __init__(self):
+                        self.n = 0
+
+                    def run(self, ctx):
+                        self.n += 1
+                        print("n=%s pid=%s" % (self.n, os.getpid()))
+
                 app = App(config={{}})
+                app.include(Router(counter=Counter()))
                 app.include(service, prefix="api", port={port})
                 app.run()
             '''))
             env = os.environ.copy()
             src = str(Path(__file__).resolve().parents[1])
             env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
-            server = subprocess.Popen(
-                [sys.executable, str(app_path), "api"],
+
+            def call(action):
+                return subprocess.run(
+                    [sys.executable, str(app_path), action],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+
+            offline = call("counter")
+            self.assertEqual(offline.returncode, 1, offline.stdout + offline.stderr)
+            self.assertIn("pyouter is not running", offline.stderr)
+            offline_web = call("api.health")
+            self.assertEqual(offline_web.returncode, 1, offline_web.stdout + offline_web.stderr)
+            self.assertIn("pyouter is not running", offline_web.stderr)
+            listed = subprocess.run(
+                [sys.executable, str(app_path), "--tasks"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            self.assertEqual(listed.returncode, 0, listed.stdout + listed.stderr)
+            self.assertIn("counter", listed.stdout)
+            self.assertIn("api.health", listed.stdout)
+
+            runtime = subprocess.Popen(
+                [sys.executable, str(app_path)],
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 start_new_session=True,
             )
+            runtime_log = []
+
+            def drain():
+                for line in runtime.stdout:
+                    runtime_log.append(line)
+
+            threading.Thread(target=drain, daemon=True).start()
+            service = None
             try:
+                from pyouter.runtime import live_record
+
+                for _ in range(100):
+                    if live_record(app_path) is not None:
+                        break
+                    if runtime.poll() is not None:
+                        self.fail("".join(runtime_log) or "runtime exited")
+                    time.sleep(0.05)
+                else:
+                    self.fail("runtime did not start: " + "".join(runtime_log))
+
+                first_count = call("counter")
+                second_count = call("counter")
+                self.assertEqual(first_count.returncode, 0, first_count.stdout + first_count.stderr)
+                self.assertEqual(second_count.returncode, 0, second_count.stdout + second_count.stderr)
+                self.assertIn("n=1", first_count.stdout)
+                self.assertIn("n=2", second_count.stdout)
+                self.assertIn(f"pid={runtime.pid}", first_count.stdout)
+                self.assertIn(f"pid={runtime.pid}", second_count.stdout)
+                second_runtime = subprocess.run(
+                    [sys.executable, str(app_path)],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                self.assertEqual(second_runtime.returncode, 0, second_runtime.stdout + second_runtime.stderr)
+                self.assertIn("already running", second_runtime.stdout)
+                self.assertIsNone(runtime.poll())
+
+                service = subprocess.Popen(
+                    [sys.executable, str(app_path), "api"],
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    start_new_session=True,
+                )
                 address = ServiceAddress("127.0.0.1", port)
                 for _ in range(100):
                     if listening(address):
                         break
-                    if server.poll() is not None:
-                        self.fail(server.stdout.read())
+                    if service.poll() is not None:
+                        self.fail(service.stdout.read())
                     time.sleep(0.05)
                 else:
-                    self.fail("service process did not listen")
-
-                def call(action):
-                    return subprocess.run(
-                        [sys.executable, str(app_path), action],
-                        env=env,
-                        capture_output=True,
-                        text=True,
-                        timeout=15,
-                    )
+                    self.fail("service node did not listen")
 
                 first = call("api.health")
                 second = call("api.health")
@@ -352,31 +426,40 @@ class FlattenTest(unittest.TestCase):
                 self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
                 self.assertIn("/health -> 200", first.stdout)
                 pids = [line for line in pid_path.read_text().splitlines() if line]
-                self.assertEqual(pids, [str(server.pid), str(server.pid)])
+                self.assertEqual(pids, [str(runtime.pid), str(runtime.pid)])
                 again = call("api")
                 self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
                 self.assertIn("already running", again.stdout)
-                self.assertIsNone(server.poll())
-            finally:
-                if server.poll() is None:
-                    os.kill(server.pid, signal.SIGINT)
-                    server.wait(timeout=5)
-                if server.stdout is not None:
-                    server.stdout.close()
-            for _ in range(50):
-                if not listening(address):
-                    break
-                time.sleep(0.05)
+                self.assertIsNone(service.poll())
+                self.assertIsNone(runtime.poll())
 
-            missed = subprocess.run(
-                [sys.executable, str(app_path), "api.health"],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            self.assertEqual(missed.returncode, 1, missed.stdout + missed.stderr)
-            self.assertIn("not running", missed.stdout + missed.stderr)
+                os.kill(service.pid, signal.SIGINT)
+                service.wait(timeout=5)
+                for _ in range(50):
+                    if not listening(address):
+                        break
+                    time.sleep(0.05)
+                self.assertFalse(listening(address), "service kept listening after its command stopped")
+                missed = call("api.health")
+                self.assertEqual(missed.returncode, 1, missed.stdout + missed.stderr)
+                self.assertIn("not running", missed.stdout + missed.stderr)
+                self.assertNotIn("pyouter is not running", missed.stderr)
+                third = call("counter")
+                self.assertEqual(third.returncode, 0, third.stdout + third.stderr)
+                self.assertIn("n=3", third.stdout)
+                self.assertIn(f"pid={runtime.pid}", third.stdout)
+                self.assertIsNone(runtime.poll())
+            finally:
+                if service is not None and service.poll() is None:
+                    os.kill(service.pid, signal.SIGINT)
+                    service.wait(timeout=5)
+                if service is not None and service.stdout is not None:
+                    service.stdout.close()
+                if runtime.poll() is None:
+                    os.kill(runtime.pid, signal.SIGINT)
+                    runtime.wait(timeout=5)
+                if runtime.stdout is not None:
+                    runtime.stdout.close()
 
     def test_constructor_and_use_flatten(self):
         service = flask_service()

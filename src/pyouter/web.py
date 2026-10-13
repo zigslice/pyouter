@@ -393,6 +393,7 @@ class WebBridge:
         self.contexts = {}
         self.cancel_requested = set()
         self.tasks_lock = threading.Lock()
+        self._owns_loop = True
         self.hooks = self._make_hooks()
         self._stdout = None
         self._stderr = None
@@ -583,17 +584,24 @@ class WebBridge:
             with self.tasks_lock:
                 self.cancel_requested.discard(owner)
 
-    def start(self):
+    def start(self, loop=None):
+        """Bind the page. ``loop`` reuses the caller's event loop."""
         self.install_capture()
         try:
-            self.loop = asyncio.new_event_loop()
-            self.loop_thread = threading.Thread(
-                target=self._run_loop,
-                name="pyouter-web-loop",
-                daemon=True,
-            )
-            self.loop_thread.start()
-            asyncio.run_coroutine_threadsafe(asyncio.sleep(0), self.loop).result(timeout=5)
+            if loop is None:
+                self._owns_loop = True
+                self.loop = asyncio.new_event_loop()
+                self.loop_thread = threading.Thread(
+                    target=self._run_loop,
+                    name="pyouter-web-loop",
+                    daemon=True,
+                )
+                self.loop_thread.start()
+                asyncio.run_coroutine_threadsafe(asyncio.sleep(0), self.loop).result(timeout=5)
+            else:
+                self._owns_loop = False
+                self.loop = loop
+                self.loop_thread = None
             self.httpd = ReuseHTTPServer((self.host, self.port), partial(Handler, bridge=self))
             self.port = self.httpd.server_address[1]
             self.http_thread = threading.Thread(
@@ -631,7 +639,7 @@ class WebBridge:
         if self.http_thread is not None:
             self.http_thread.join(timeout=3)
             self.http_thread = None
-        if self.loop is not None and self.loop.is_running():
+        if self._owns_loop and self.loop is not None and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.loop.stop)
         if self.loop_thread is not None:
             self.loop_thread.join(timeout=3)
