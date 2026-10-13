@@ -43,6 +43,8 @@ class App(object):
         router = _as_router(router, host=host, port=port)
         if getattr(router, "origin", None) == "compose":
             raise ValueError("include a compose project with a prefix")
+        if getattr(router, "origin", None) == "ssh":
+            raise ValueError("include an ssh host with a prefix")
         self.router = router
         return self
 
@@ -57,6 +59,8 @@ class App(object):
         router = _as_router(router, host=host, port=port)
         if getattr(router, "origin", None) == "compose" and not prefix:
             raise ValueError("include a compose project with a prefix")
+        if getattr(router, "origin", None) == "ssh" and not prefix:
+            raise ValueError("include an ssh host with a prefix")
         if not hasattr(self, "router") or self.router is None:
             if prefix:
                 self.router = Router()
@@ -191,6 +195,8 @@ def _view_hook(options):
             label = "compose"
         elif role == "service":
             label = "service"
+        elif role == "ssh":
+            label = "ssh"
         elif role == "group":
             label = "web"
         elif role == "action":
@@ -203,7 +209,7 @@ def _view_hook(options):
 
 
 def _cli_error_hook(event):
-    if event.get("role") not in ("action", "serve", "container", "compose", "service"):
+    if event.get("role") not in ("action", "serve", "container", "compose", "service", "ssh"):
         return
     traceback_text = event.get("traceback")
     if traceback_text:

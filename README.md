@@ -284,7 +284,50 @@ python app.py stack.api.health
 
 `python app.py stack` runs `docker compose up -d` and waits. `stack.web` is the `web` service from the file. `stack.web.ping` is `docker compose exec` inside that service. `stack.api.health` sends one request to the published address. Stopping the `stack` command runs `docker compose down` for the stack it started.
 
+## ssh
+
+An SSH host is a node too. Commands on that host are child nodes, so `a.b.c.d` runs on the host named `b`. The `ssh` program is used only when the host node runs. The connection does not ask for a password; it uses the keys and agent already available to `ssh`.
+
+```python
+from pyouter.app import App
+from pyouter.docker import Service
+from pyouter.router import Router
+from pyouter.ssh import Remote, SSH
+
+edge = SSH(
+    "10.0.0.8",
+    user="deploy",
+    forwards=("8080:127.0.0.1:80",),
+    routes=Router(
+        c=Router(d=Remote("echo", "deep")),
+        api=Service(
+            "http://127.0.0.1:8080",
+            health=("GET", "/health"),
+        ),
+    ),
+)
+
+app = App(config={})
+app.include(Router(a=Router(b=edge)))
+app.run()
+```
+
+```shell
+python app.py
+python app.py a.b
+python app.py a.b.c.d
+python app.py a.b.api.health
+```
+
+`python app.py a.b` opens one connection and waits. `a.b.c.d` runs `echo deep` on `deploy@10.0.0.8`. `a.b.api.health` sends `GET /health` through the local forward. Both fail, and say to start the ssh node, when `a.b` is not connected. Running `a.b` again while it is connected reports that and leaves the connection in place. Stopping the `a.b` command closes the connection it opened. The pyouter process keeps running.
+
+Mount the host with a prefix, or place it under a name as `b` is placed above. `forwards` are `ssh -L` values.
+
 ## What's new
+
+### 0.7.0
+
+* an SSH host is a node; commands and forwarded HTTP routes under it are child nodes
 
 ### 0.6.0
 
