@@ -38,8 +38,8 @@ class Remote:
 class SSH(Router):
     """One SSH host whose commands are child routes.
 
-    ``routes`` is the next segment, written in Python. Starting this node
-    opens that segment. A :class:`Remote` runs on the host.
+    ``routes`` is the next layer. ``balancer`` and ``workers`` start that
+    layer's pool on the host. A :class:`Remote` runs on the host.
     A :class:`~pyouter.docker.Service` calls an address reached through a
     local forward. Nested routers add path segments, so ``b.c.d`` is node
     ``d`` under group ``c`` on host ``b``.
@@ -50,9 +50,13 @@ class SSH(Router):
     tests can substitute a fake. The connection does not ask for a password.
     """
 
-    def __init__(self, host, routes=None, user=None, port=None, identity=None, forwards=None, ssh="ssh"):
+    def __init__(self, host, routes=None, user=None, port=None, identity=None, forwards=None, ssh="ssh", workers=1, balancer="uvicorn"):
         super().__init__()
+        from .balance import normalize_balancer, normalize_workers
         self.origin = "ssh"
+        self.layer = "ssh"
+        self.balancer = normalize_balancer(balancer)
+        self.workers = normalize_workers(workers)
         self.hostname = _hostname(host)
         self.user = _user(user)
         self.port = _port(port)
@@ -299,12 +303,11 @@ def _bind(host, node):
     from .docker import Command, PublishedRoute
 
     origin = getattr(node, "origin", None)
-    if (
-        isinstance(node, Router)
-        and node is not host
-        and origin in {"docker", "compose", "compose-service", "ssh"}
-    ):
-        raise TypeError("an SSH host cannot contain another host")
+    if isinstance(node, Router) and node is not host:
+        if origin == "ssh":
+            raise TypeError("an SSH host cannot contain another ssh host")
+        if origin in {"docker", "compose", "compose-service"} or getattr(node, "serves", False):
+            return
     if isinstance(node, Command):
         raise TypeError("use Remote for a command on an SSH host")
     if isinstance(node, Remote):

@@ -324,32 +324,57 @@ python app.py a.b.api.health
 
 Mount the host with a prefix, or place it under a name as `b` is placed above. `forwards` are `ssh -L` values.
 
-## segments
+## layers
 
-The route tree is one Python object. A container, a Compose project, an SSH host, or a web service is a boundary in that tree. The `routes` on a container are a second pyouter tree. Starting the container opens that tree inside it and starts its own pool there.
+A route tree can nest any of these nodes. Three of them start a new load balancer, so crossing one is a new layer:
 
-```text
-outer pool                 any worker on the host
-a
-a.b                        the one worker that owns the container
-        |
-        +-- inside the container, a new pyouter
-              c
-              c.d          any worker of the pool inside the container
-              edge         the inner worker that owns the SSH host
-              edge.e       any worker of the pool under that host
+| node | layer | what the parent pool does | what this layer's pool does |
+| --- | --- | --- | --- |
+| container | docker | one worker starts and owns the container | balances every call under the container |
+| SSH host | ssh | one worker opens and owns the connection | balances every call on that host |
+| web service | server | one worker starts and owns the listener | balances every request the service handles |
+
+A listening server is a layer. It has its own worker pool. The cli process you start is the outermost pool, and it is not a crossing.
+
+`cli > docker > ssh > docker > server` is four layers. A call that lands on a layer node stays on one worker of the parent. A call that goes past that node is balanced inside the layer.
+
+```python
+from pyouter.docker import Container
+from pyouter.flatten import flatten
+from pyouter.ssh import SSH
+from pyouter.router import Router
+
+api = flatten(service, workers=4)
+inner = Container("python:3.12-slim", name="inner", routes=Router(api=api), workers=3)
+jump = SSH("10.0.0.9", routes=Router(box=inner), workers=2)
+edge = Container("python:3.12-slim", name="edge", routes=Router(host=jump), workers=2)
+app.include(Router(cli=Router(box=edge)))
 ```
 
-A call such as `a.b.c.d` reaches the worker that owns `a.b`. That worker gives the remaining path `c.d` to the pyouter listening inside the container. The inner pool chooses which of its processes runs `c.d`. Those processes are inside the container; the outer `--worker` processes are not.
+`cli.box` is the outer container node: the cli pool owns it. `cli.box.host.box.api.health` is inside the server, so the server's 4 workers balance that call. Each layer on the way has already handed the call to the next pool.
 
-`python app.py` is the first outer worker. `python app.py --worker` joins the outer pool. `workers=` on the container is the size of the pool inside it. An object with `run` stays on the worker that first ran it. A call into a container that is not running fails and tells you to start that node.
+| place | parameter | default | effect |
+| --- | --- | --- | --- |
+| container, SSH host, web service | `balancer` | `uvicorn` | which provider starts that layer's pool |
+| container, SSH host, web service | `workers` | `1` | how many processes that pool starts |
+
+The provider is an internal detail of the pool. You set `balancer` and `workers`. Replacing the provider is `register_provider(name, start)` and passing that name as `balancer`.
+
+One measured run, 4 concurrent calls, each occupying its process for 0.3s:
+
+| workers | calls | hold | elapsed | processes used | speedup |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 4 | 0.3s | 1.206s | 1 | 1 |
+| 4 | 4 | 0.3s | 0.304s | 4 | 3.97 |
+
+Four processes finish the same concurrent work in about a quarter of the time. One process runs the calls one after another. The test requires the larger pool to be at least 1.5 times faster.
 
 ## What's new
 
 ### 0.8.0
 
-* starting a container boots the `routes` tree as a pyouter inside it, with its own worker pool
-* a call under that container is handed to the inner pyouter; `python app.py --worker` joins the outer pool
+* a container, an SSH host, and a web service are layers, each with its own `balancer` and `workers`
+* the default balancer spreads concurrent work across that layer's processes
 
 ### 0.7.0
 

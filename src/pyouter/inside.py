@@ -50,13 +50,9 @@ def launch(node, route_path):
     port = _free_port()
     node.inner_port = port
     node.inside_path = "" if route_path is None else str(route_path)
-    workers = getattr(node, "workers", 2)
-    try:
-        workers = int(workers)
-    except (TypeError, ValueError):
-        workers = 2
-    if workers < 1:
-        workers = 1
+    from .balance import boot_argv, normalize_workers
+    workers = normalize_workers(getattr(node, "workers", None))
+    provider = getattr(node, "balancer", None) or "uvicorn"
     args = [
         "-v", f"{package_root}:/opt/pyouter:ro",
         "-v", f"{script.parent}:/opt/app:ro",
@@ -65,9 +61,10 @@ def launch(node, route_path):
         "-e", f"PYOUTER_INSIDE={node.inside_path}",
         "-e", f"PYOUTER_INSIDE_WORKERS={workers}",
         "-e", f"PYOUTER_INSIDE_PORT={INSIDE_PORT}",
+        "-e", f"PYOUTER_BALANCER={provider}",
         "-p", f"127.0.0.1:{port}:{INSIDE_PORT}",
     ]
-    return args, ["python", f"/opt/app/{script.name}"]
+    return args, boot_argv(node, INSIDE_PORT)
 
 
 def enclosing_docker(router, path):

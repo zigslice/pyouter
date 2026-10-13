@@ -84,7 +84,7 @@ class _Record:
         self.doc = doc or ""
 
 
-def flatten(service, host="127.0.0.1", port=None):
+def flatten(service, host="127.0.0.1", port=None, balancer="uvicorn", workers=1):
     """Return a router whose leaves are the HTTP routes of ``service``.
 
     ``service`` is a Flask application or a FastAPI (or Starlette)
@@ -93,7 +93,8 @@ def flatten(service, host="127.0.0.1", port=None):
     request to that address. A path that is only a prefix becomes a router;
     a single method with no child path becomes a leaf named by that path.
     Several methods on one path become children named ``get``, ``post``, and
-    so on. The site root is the leaf ``root``.
+    so on. The site root is the leaf ``root``. The service is a server
+    layer: ``balancer`` and ``workers`` belong to that layer.
     """
     framework = detect_framework(service)
     if framework is None:
@@ -101,7 +102,12 @@ def flatten(service, host="127.0.0.1", port=None):
             "flatten() expects a Flask or FastAPI application, "
             f"got {type(service).__name__}"
         )
-    return _flatten(service, framework, host=host, port=port)
+    router = _flatten(service, framework, host=host, port=port)
+    from .balance import normalize_balancer, normalize_workers
+    router.layer = "server"
+    router.balancer = normalize_balancer(balancer)
+    router.workers = normalize_workers(workers)
+    return router
 
 
 def adopt(value, host=None, port=None):
@@ -157,6 +163,9 @@ def _flatten(service, framework, host, port):
         _place(tree, record)
     router = _materialize(service, framework, tree, address, root=True)
     router.app = service
+    router.layer = "server"
+    router.balancer = "uvicorn"
+    router.workers = 1
     return router
 
 

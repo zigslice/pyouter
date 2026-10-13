@@ -94,29 +94,31 @@ class Service(Router):
 class Container(Router):
     """A container whose commands and services are child routes.
 
-    ``routes`` is a pyouter tree. Starting this node runs that tree inside
-    the container: pyouter mounts this package and the application script
-    and starts them with ``python``. No Dockerfile is written. ``workers``
-    is the number of pyouter processes inside the container; calls that
-    cross this node are spread across those processes.
+    ``routes`` is the next layer. Starting this node runs that layer inside
+    the container. ``balancer`` selects the pool implementation and
+    ``workers`` is how many processes it starts. Calls under this node are
+    spread across that pool. No Dockerfile is written.
 
     ``command`` replaces that runtime when the image itself is the service.
     ``ports`` are ``docker run -p`` values, such as ``"8080:80"``.
     ``docker`` is the docker executable, so tests can substitute a fake.
     """
 
-    def __init__(self, image, routes=None, name=None, command=None, ports=None, docker="docker", workers=2):
+    def __init__(self, image, routes=None, name=None, command=None, ports=None, docker="docker", workers=1, balancer="uvicorn"):
         super().__init__()
         if not isinstance(image, str) or image == "" or image.startswith("-"):
             raise ValueError("container image must be a non-empty name")
+        from .balance import normalize_balancer, normalize_workers
         self.origin = "docker"
+        self.layer = "docker"
         self.image = image
         self.container_name = _container_name(name, image)
         self.hosts_inside = command is None
         self.command = _command(command)
         self.ports = _ports(ports)
         self.docker = docker
-        self.workers = workers if isinstance(workers, int) and workers > 0 else 2
+        self.balancer = normalize_balancer(balancer)
+        self.workers = normalize_workers(workers)
         self.inner_port = None
         self.inside_path = None
         self._owns = False

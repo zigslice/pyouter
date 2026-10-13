@@ -179,7 +179,9 @@ class SegmentTests(unittest.TestCase):
             runs = json.loads((Path(directory) / "state.json").read_text())["runs"]
             flat = " ".join(runs[0])
             self.assertIn("PYOUTER_INSIDE=box", flat)
-            self.assertIn("PYOUTER_INSIDE_WORKERS=2", flat)
+            self.assertIn("PYOUTER_INSIDE_WORKERS=1", flat)
+            self.assertIn("PYOUTER_BALANCER=uvicorn", flat)
+            self.assertIn("pyouter.balance", flat)
             self.assertIn("python", runs[0])
 
 
