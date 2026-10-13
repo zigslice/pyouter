@@ -153,7 +153,7 @@ python app.py hello
 
 `python app.py` starts one process and leaves it running. Every later command routes a node into that process, prints the result, and exits. A function, a router, a web service, and a web endpoint are the same kind of step: the process you started is what executes the node. The command delivers the path.
 
-`python app.py hello` runs `hello` there. The object you mounted keeps its state across commands, because both commands are executed by the same process. A second `python app.py` prints `pyouter already running`. A command issued before that process exists fails and tells you to start it. `--tasks` and `--tree` only read the route tree, so they run in the command itself.
+`python app.py hello` runs `hello` there. An object keeps its state across commands, because those commands stay on the worker that first ran it. A second `python app.py` prints `pyouter already running`. `python app.py --worker` joins the pools as another process. A command issued before the first process exists fails and tells you to start it. `--tasks` and `--tree` only read the route tree, so they run in the command itself.
 
 Calling `run()` after you have set `options` executes in the current process. Tests and embedded callers use that path.
 
@@ -228,8 +228,9 @@ from pyouter.docker import Command, Container, Service
 from pyouter.router import Router
 
 box = Container(
-    "alpine:3",
+    "python:3.12-slim",
     name="tools",
+    workers=2,
     ports=("8080:80",),
     routes=Router(
         c=Router(
@@ -254,9 +255,9 @@ python app.py a.b.c.d
 python app.py a.b.api.health
 ```
 
-`python app.py a.b` starts the container and waits. `a.b.c.d` is `docker exec tools echo deep` in that container, then the command exits. `a.b.api.health` sends `GET /health` to the published address. Both fail, and say to start the container, when `a.b` is not running. Running `a.b` again while it is running reports that and leaves the container in place. Stopping the `a.b` command removes the container it started. The pyouter process keeps running.
+`python app.py a.b` starts the container and waits. The container's main process is another pyouter, serving the `routes` you passed. `workers=2` starts that many pyouter processes inside the container. `a.b.c.d` is handed to that inner pyouter, which runs `echo deep` on one of those processes. `a.b.api.health` sends `GET /health` to the published address. Both fail, and say to start the container, when `a.b` is not running. Running `a.b` again while it is running reports that and leaves the container in place. Stopping the `a.b` command removes the container it started. The outer pyouter process keeps running.
 
-`command=("nginx", "-g", "daemon off;")` replaces the default `sleep infinity` when the image itself is the service. A nested router such as `c` is only another path segment.
+The image needs Python. pyouter mounts its source and the application script and starts them; you do not write a Dockerfile. `command=("nginx", "-g", "daemon off;")` replaces the inner runtime when the image itself is the service. A nested router such as `c` is only another path segment.
 
 A Compose file is the same kind of node, one level up. Each service in the file is a child. Commands and HTTP routes are added onto a service by name. Mount the project with a prefix; that prefix is what starts the stack. A `.yml` file needs PyYAML. A `.json` Compose file does not.
 
@@ -323,7 +324,57 @@ python app.py a.b.api.health
 
 Mount the host with a prefix, or place it under a name as `b` is placed above. `forwards` are `ssh -L` values.
 
+## layers
+
+A route tree can nest any of these nodes. Three of them start a new load balancer, so crossing one is a new layer:
+
+| node | layer | what the parent pool does | what this layer's pool does |
+| --- | --- | --- | --- |
+| container | docker | one worker starts and owns the container | balances every call under the container |
+| SSH host | ssh | one worker opens and owns the connection | balances every call on that host |
+| web service | server | one worker starts and owns the listener | balances every request the service handles |
+
+A listening server is a layer. It has its own worker pool. The cli process you start is the outermost pool, and it is not a crossing.
+
+`cli > docker > ssh > docker > server` is four layers. A call that lands on a layer node stays on one worker of the parent. A call that goes past that node is balanced inside the layer.
+
+```python
+from pyouter.docker import Container
+from pyouter.flatten import flatten
+from pyouter.ssh import SSH
+from pyouter.router import Router
+
+api = flatten(service, workers=4)
+inner = Container("python:3.12-slim", name="inner", routes=Router(api=api), workers=3)
+jump = SSH("10.0.0.9", routes=Router(box=inner), workers=2)
+edge = Container("python:3.12-slim", name="edge", routes=Router(host=jump), workers=2)
+app.include(Router(cli=Router(box=edge)))
+```
+
+`cli.box` is the outer container node: the cli pool owns it. `cli.box.host.box.api.health` is inside the server, so the server's 4 workers balance that call. Each layer on the way has already handed the call to the next pool.
+
+| place | parameter | default | effect |
+| --- | --- | --- | --- |
+| container, SSH host, web service | `balancer` | `uvicorn` | which provider starts that layer's pool |
+| container, SSH host, web service | `workers` | `1` | how many processes that pool starts |
+
+The provider is an internal detail of the pool. You set `balancer` and `workers`. Replacing the provider is `register_provider(name, start)` and passing that name as `balancer`.
+
+One measured run, 4 concurrent calls, each occupying its process for 0.3s:
+
+| workers | calls | hold | elapsed | processes used | speedup |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 4 | 0.3s | 1.206s | 1 | 1 |
+| 4 | 4 | 0.3s | 0.304s | 4 | 3.97 |
+
+Four processes finish the same concurrent work in about a quarter of the time. One process runs the calls one after another. The test requires the larger pool to be at least 1.5 times faster.
+
 ## What's new
+
+### 0.8.0
+
+* a container, an SSH host, and a web service are layers, each with its own `balancer` and `workers`
+* the default balancer spreads concurrent work across that layer's processes
 
 ### 0.7.0
 

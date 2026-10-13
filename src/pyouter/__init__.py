@@ -2,6 +2,7 @@ from .router import Router, node_kind
 from .flatten import WebEndpoint, flatten
 from .docker import Command, Compose, Container, Service
 from .ssh import Remote, SSH
+from .segment import SegmentBoard, locate
 from .context import Context, Hooks, NodeResult, RunResult
 from .oh_my_zsh.install import install as omz
 from .fish.install import install as fish

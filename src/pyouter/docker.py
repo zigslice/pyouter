@@ -10,6 +10,7 @@ children. Running the project starts the stack and waits. A command under
 import asyncio
 import hashlib
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -58,6 +59,8 @@ class PublishedRoute:
         self.__name__ = self.method.lower()
 
     def run(self, ctx):
+        if os.environ.get("PYOUTER_INSIDE"):
+            return invoke_endpoint(self, ctx)
         container = self.container
         if container is None:
             raise RuntimeError("route is not inside a container")
@@ -91,27 +94,33 @@ class Service(Router):
 class Container(Router):
     """A container whose commands and services are child routes.
 
-    ``routes`` is an ordinary router. A :class:`Command` runs inside the
-    container. A :class:`Service` calls a port the container publishes.
-    Nested routers add path segments, so ``b.c.d`` is node ``d`` under
-    group ``c`` inside container ``b``.
+    ``routes`` is the next layer. Starting this node runs that layer inside
+    the container. ``balancer`` selects the pool implementation and
+    ``workers`` is how many processes it starts. Calls under this node are
+    spread across that pool. No Dockerfile is written.
 
-    ``command`` is the process ``docker run`` starts. It defaults to
-    ``sleep infinity`` so later commands can exec into a live container.
+    ``command`` replaces that runtime when the image itself is the service.
     ``ports`` are ``docker run -p`` values, such as ``"8080:80"``.
     ``docker`` is the docker executable, so tests can substitute a fake.
     """
 
-    def __init__(self, image, routes=None, name=None, command=None, ports=None, docker="docker"):
+    def __init__(self, image, routes=None, name=None, command=None, ports=None, docker="docker", workers=1, balancer="uvicorn"):
         super().__init__()
         if not isinstance(image, str) or image == "" or image.startswith("-"):
             raise ValueError("container image must be a non-empty name")
+        from .balance import normalize_balancer, normalize_workers
         self.origin = "docker"
+        self.layer = "docker"
         self.image = image
         self.container_name = _container_name(name, image)
+        self.hosts_inside = command is None
         self.command = _command(command)
         self.ports = _ports(ports)
         self.docker = docker
+        self.balancer = normalize_balancer(balancer)
+        self.workers = normalize_workers(workers)
+        self.inner_port = None
+        self.inside_path = None
         self._owns = False
         if routes is not None:
             self.include(routes)
@@ -184,8 +193,12 @@ class Compose(Router):
 def exec_command(node):
     """Run ``node`` inside its container or Compose service.
 
-    The container or project is not started here.
+    The container or project is not started here. A process that is already
+    the inner runtime runs the command locally.
     """
+    if os.environ.get("PYOUTER_INSIDE"):
+        from .inside import local_command
+        return local_command(node)
     host = getattr(node, "container", None)
     if host is None:
         raise RuntimeError("command is not inside a container")
@@ -270,20 +283,29 @@ async def start_container(node, ctx):
     """
     if await asyncio.to_thread(container_running, node):
         print(f"container already running: {node.container_name}")
+        from .segment import host_is_ready
+        host_is_ready()
         return {"status": "running", "container": node.container_name}
 
     if await asyncio.to_thread(_container_exists, node):
         await asyncio.to_thread(_docker, node, ["rm", "-f", node.container_name])
 
+    from .inside import launch
+    from .segment import _path as _route_path
+    inside = launch(node, _route_path.get())
     argv = ["run", "--name", node.container_name, "-d"]
+    if inside is not None:
+        argv.extend(inside[0])
     for published in node.ports:
         argv.extend(["-p", published])
     argv.append(node.image)
-    argv.extend(node.command)
+    argv.extend(inside[1] if inside is not None else node.command)
     node._owns = True
     try:
         await asyncio.to_thread(_docker, node, argv)
         print(f"container {node.container_name}")
+        from .segment import host_is_ready
+        host_is_ready()
         while await asyncio.to_thread(container_running, node):
             if ctx is not None and getattr(ctx, "cancelled", False):
                 break
@@ -294,6 +316,9 @@ async def start_container(node, ctx):
                 _docker, node, ["rm", "-f", node.container_name], False
             )
             node._owns = False
+            node.inner_port = None
+            from .segment import host_is_down
+            host_is_down()
     if ctx is not None and getattr(ctx, "cancelled", False):
         raise asyncio.CancelledError()
     return {"status": "stopped", "container": node.container_name}
@@ -307,12 +332,16 @@ async def start_compose(node, ctx):
     """
     if await asyncio.to_thread(project_running, node):
         print(f"compose project already running: {node.project_name}")
+        from .segment import host_is_ready
+        host_is_ready()
         return {"status": "running", "project": node.project_name}
 
     node._owns = True
     try:
         await asyncio.to_thread(_docker, node, [*node._base(), "up", "-d"])
         print(f"compose project {node.project_name}")
+        from .segment import host_is_ready
+        host_is_ready()
         while await asyncio.to_thread(project_running, node):
             if ctx is not None and getattr(ctx, "cancelled", False):
                 break
@@ -321,6 +350,8 @@ async def start_compose(node, ctx):
         if node._owns:
             await asyncio.to_thread(_docker, node, [*node._base(), "down"], False)
             node._owns = False
+            from .segment import host_is_down
+            host_is_down()
     if ctx is not None and getattr(ctx, "cancelled", False):
         raise asyncio.CancelledError()
     return {"status": "stopped", "project": node.project_name}

@@ -38,7 +38,8 @@ class Remote:
 class SSH(Router):
     """One SSH host whose commands are child routes.
 
-    ``routes`` is an ordinary router. A :class:`Remote` runs on the host.
+    ``routes`` is the next layer. ``balancer`` and ``workers`` start that
+    layer's pool on the host. A :class:`Remote` runs on the host.
     A :class:`~pyouter.docker.Service` calls an address reached through a
     local forward. Nested routers add path segments, so ``b.c.d`` is node
     ``d`` under group ``c`` on host ``b``.
@@ -49,9 +50,13 @@ class SSH(Router):
     tests can substitute a fake. The connection does not ask for a password.
     """
 
-    def __init__(self, host, routes=None, user=None, port=None, identity=None, forwards=None, ssh="ssh"):
+    def __init__(self, host, routes=None, user=None, port=None, identity=None, forwards=None, ssh="ssh", workers=1, balancer="uvicorn"):
         super().__init__()
+        from .balance import normalize_balancer, normalize_workers
         self.origin = "ssh"
+        self.layer = "ssh"
+        self.balancer = normalize_balancer(balancer)
+        self.workers = normalize_workers(workers)
         self.hostname = _hostname(host)
         self.user = _user(user)
         self.port = _port(port)
@@ -130,6 +135,8 @@ async def start_ssh(node, ctx):
     """
     if await asyncio.to_thread(ssh_connected, node):
         print(f"ssh already connected: {node.destination}")
+        from .segment import host_is_ready
+        host_is_ready()
         return {"status": "connected", "host": node.destination}
 
     node._owns = True
@@ -139,6 +146,8 @@ async def start_ssh(node, ctx):
         node._master = proc
         await _wait_until_connected(node, proc)
         print(f"ssh {node.destination}")
+        from .segment import host_is_ready
+        host_is_ready()
         while await asyncio.to_thread(ssh_connected, node):
             if ctx is not None and getattr(ctx, "cancelled", False):
                 break
@@ -149,6 +158,8 @@ async def start_ssh(node, ctx):
         if node._owns:
             await asyncio.to_thread(_disconnect, node)
             node._owns = False
+            from .segment import host_is_down
+            host_is_down()
     if ctx is not None and getattr(ctx, "cancelled", False):
         raise asyncio.CancelledError()
     return {"status": "stopped", "host": node.destination}
@@ -292,12 +303,11 @@ def _bind(host, node):
     from .docker import Command, PublishedRoute
 
     origin = getattr(node, "origin", None)
-    if (
-        isinstance(node, Router)
-        and node is not host
-        and origin in {"docker", "compose", "compose-service", "ssh"}
-    ):
-        raise TypeError("an SSH host cannot contain another host")
+    if isinstance(node, Router) and node is not host:
+        if origin == "ssh":
+            raise TypeError("an SSH host cannot contain another ssh host")
+        if origin in {"docker", "compose", "compose-service"} or getattr(node, "serves", False):
+            return
     if isinstance(node, Command):
         raise TypeError("use Remote for a command on an SSH host")
     if isinstance(node, Remote):

@@ -358,8 +358,10 @@ class SSHTest(unittest.TestCase):
             SSH("10.0.0.8", forwards=("8080:80",))
         with self.assertRaises(TypeError):
             SSH("10.0.0.8", routes=Router(ping=Command("echo", "x")))
+        nested = SSH("10.0.0.8", routes=Router(box=Container("alpine", command=("sleep", "infinity"))))
+        self.assertEqual(nested.route["box"].layer, "docker")
         with self.assertRaises(TypeError):
-            SSH("10.0.0.8", routes=Router(box=Container("alpine")))
+            SSH("10.0.0.8", routes=Router(jump=SSH("10.0.0.9")))
         with self.assertRaises(ValueError):
             Remote()
         app = App(config={})

@@ -84,7 +84,7 @@ class _Record:
         self.doc = doc or ""
 
 
-def flatten(service, host="127.0.0.1", port=None):
+def flatten(service, host="127.0.0.1", port=None, balancer="uvicorn", workers=1):
     """Return a router whose leaves are the HTTP routes of ``service``.
 
     ``service`` is a Flask application or a FastAPI (or Starlette)
@@ -93,7 +93,8 @@ def flatten(service, host="127.0.0.1", port=None):
     request to that address. A path that is only a prefix becomes a router;
     a single method with no child path becomes a leaf named by that path.
     Several methods on one path become children named ``get``, ``post``, and
-    so on. The site root is the leaf ``root``.
+    so on. The site root is the leaf ``root``. The service is a server
+    layer: ``balancer`` and ``workers`` belong to that layer.
     """
     framework = detect_framework(service)
     if framework is None:
@@ -101,7 +102,12 @@ def flatten(service, host="127.0.0.1", port=None):
             "flatten() expects a Flask or FastAPI application, "
             f"got {type(service).__name__}"
         )
-    return _flatten(service, framework, host=host, port=port)
+    router = _flatten(service, framework, host=host, port=port)
+    from .balance import normalize_balancer, normalize_workers
+    router.layer = "server"
+    router.balancer = normalize_balancer(balancer)
+    router.workers = normalize_workers(workers)
+    return router
 
 
 def adopt(value, host=None, port=None):
@@ -157,6 +163,9 @@ def _flatten(service, framework, host, port):
         _place(tree, record)
     router = _materialize(service, framework, tree, address, root=True)
     router.app = service
+    router.layer = "server"
+    router.balancer = "uvicorn"
+    router.workers = 1
     return router
 
 
@@ -442,6 +451,8 @@ async def serve_service(node, ctx):
     if listening(node.address):
         url = node.address.base_url
         print(f"web service already running at {url}")
+        from .segment import host_is_ready
+        host_is_ready()
         return {"status": "running", "url": url}
 
     handle = _ServerHandle(node)
@@ -454,10 +465,15 @@ async def serve_service(node, ctx):
                 return {"status": "running", "url": url}
             raise RuntimeError(f"cannot bind {node.address.base_url}: {handle.errors[0]}")
         print(f"web service {node.address.base_url}")
-        while handle.thread is not None and handle.thread.is_alive():
-            if ctx is not None and getattr(ctx, "cancelled", False):
-                break
-            await asyncio.sleep(0.05)
+        from .segment import host_is_down, host_is_ready
+        host_is_ready()
+        try:
+            while handle.thread is not None and handle.thread.is_alive():
+                if ctx is not None and getattr(ctx, "cancelled", False):
+                    break
+                await asyncio.sleep(0.05)
+        finally:
+            host_is_down()
     finally:
         await asyncio.to_thread(handle.stop)
     if ctx is not None and getattr(ctx, "cancelled", False):
