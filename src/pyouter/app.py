@@ -34,22 +34,24 @@ class App(object):
         if not hasattr(self, "router") or self.router is None:
             raise NotInit("self.router in App")
     
-    def use(self, router: Router):
+    def use(self, router: Router, host=None, port=None):
         """Replace the application's router.
 
         A Flask or FastAPI application is flattened into routes first.
+        ``host`` and ``port`` are where that service listens.
         """
-        self.router = _as_router(router)
+        self.router = _as_router(router, host=host, port=port)
         return self
 
-    def include(self, router: Router, prefix=None):
+    def include(self, router: Router, prefix=None, host=None, port=None):
         """Mount ``router`` on the application router.
 
         The first call sets the router. Later calls merge routes. ``prefix``
         mounts them under that name. A Flask or FastAPI application is
-        flattened into routes before it is mounted.
+        flattened into routes before it is mounted. ``host`` and ``port``
+        are where that service listens.
         """
-        router = _as_router(router)
+        router = _as_router(router, host=host, port=port)
         if not hasattr(self, "router") or self.router is None:
             if prefix:
                 self.router = Router()
@@ -125,9 +127,13 @@ class App(object):
             for task in self.router.tasks():
                 print(task)
         else:
-            node_result = asyncio.run(
-                self.router.dispatch("", self.options.actions, 0, self._context())
-            )
+            try:
+                node_result = asyncio.run(
+                    self.router.dispatch("", self.options.actions, 0, self._context())
+                )
+            except KeyboardInterrupt:
+                print("\n[pyouter] stopped")
+                return self
             self.result = RunResult(node_result)
             if not node_result.ok:
                 raise SystemExit(self.result.exit_code)
@@ -147,6 +153,10 @@ def _view_hook(options):
             label = "router"
         elif role == "fanout":
             label = "router2"
+        elif role == "serve":
+            label = "service"
+        elif role == "group":
+            label = "web"
         elif role == "action":
             label = "action"
         else:
@@ -157,7 +167,7 @@ def _view_hook(options):
 
 
 def _cli_error_hook(event):
-    if event.get("role") != "action":
+    if event.get("role") not in ("action", "serve"):
         return
     traceback_text = event.get("traceback")
     if traceback_text:

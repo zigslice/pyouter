@@ -1,10 +1,18 @@
 import asyncio
 import io
 import json
+import os
+import signal
+import socket
+import subprocess
 import sys
+import tempfile
+import textwrap
+import threading
 import time
 import unittest
 import urllib.request
+from pathlib import Path
 from types import SimpleNamespace
 
 from flask import Blueprint, Flask, abort
@@ -14,13 +22,86 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from pyouter.app import App
-from pyouter.flatten import WebEndpoint, flatten
+from pyouter.context import Context
+from pyouter.flatten import WebEndpoint, flatten, invoke_endpoint, listening, serve_service
+from pyouter.flatten import ServiceAddress
 from pyouter.router import Router, node_kind
 from pyouter.web import WebBridge, build_tree
 
 
 def sync_action(config, options):
     return "sync"
+
+
+def free_port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+class running_service:
+    """Keep a flattened service listening on a background loop."""
+
+    def __init__(self, node):
+        self.node = node
+        self.ctx = Context({}, options())
+        self.loop = asyncio.new_event_loop()
+        self.ready = threading.Event()
+        self.task = None
+        self.thread = None
+        self.failure = None
+
+    def __enter__(self):
+        self.thread = threading.Thread(target=self._main, daemon=True)
+        self.thread.start()
+        if not self.ready.wait(8):
+            self._stop()
+            raise RuntimeError("timed out waiting for the web service")
+        if self.failure is not None:
+            self._stop()
+            raise self.failure
+        if not listening(self.node.address):
+            self._stop()
+            raise RuntimeError("web service is not listening")
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._stop()
+        return False
+
+    def _main(self):
+        asyncio.set_event_loop(self.loop)
+        self.task = self.loop.create_task(serve_service(self.node, self.ctx))
+
+        async def watch():
+            for _ in range(200):
+                if listening(self.node.address) or self.task.done():
+                    return
+                await asyncio.sleep(0.025)
+
+        try:
+            self.loop.run_until_complete(watch())
+            self.ready.set()
+            self.loop.run_until_complete(self.task)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            self.failure = exc
+            self.ready.set()
+        finally:
+            if not self.loop.is_closed():
+                self.loop.close()
+
+    def _stop(self):
+        self.ctx.cancel()
+        loop = self.loop
+        if loop.is_running():
+            def cancel():
+                if self.task is not None and not self.task.done():
+                    self.task.cancel()
+            loop.call_soon_threadsafe(cancel)
+        if self.thread is not None:
+            self.thread.join(5)
 
 
 def options(**extra):
@@ -111,7 +192,10 @@ class FlattenTest(unittest.TestCase):
         api = app.router.route["api"]
         self.assertEqual(node_kind(api), "web")
         self.assertEqual(api.framework, "flask")
-        self.assertEqual(api.policy, "sequence")
+        self.assertTrue(api.serves)
+        self.assertFalse(api.route["users"].serves)
+        self.assertEqual(api.address.port, 5000)
+        self.assertEqual(api.route["health"].address.base_url, "http://127.0.0.1:5000")
         self.assertNotIn("static", api.route)
         self.assertIsInstance(api.route["health"], WebEndpoint)
         self.assertEqual(api.route["health"].method, "GET")
@@ -136,35 +220,36 @@ class FlattenTest(unittest.TestCase):
     def test_flask_invocation_reads_options_config_and_params(self):
         service = flask_service()
         app = App(config={"user_id": 5})
-        app.include(service, prefix="api")
-        app.options = options(actions="api.health")
-        stdout = io.StringIO()
-        with _stdio(stdout):
-            app.run()
-        self.assertEqual(app.result.root.value["status"], 200)
-        self.assertEqual(app.result.root.value["body"], {"ok": True})
-        self.assertIn("GET /health -> 200", stdout.getvalue())
+        app.include(service, prefix="api", port=free_port())
+        with running_service(app.router.route["api"]):
+            app.options = options(actions="api.health")
+            stdout = io.StringIO()
+            with _stdio(stdout):
+                app.run()
+            self.assertEqual(app.result.root.value["status"], 200)
+            self.assertEqual(app.result.root.value["body"], {"ok": True})
+            self.assertIn("/health -> 200", stdout.getvalue())
 
-        app.options = options(actions="api.users.user_id")
-        with _stdio(io.StringIO()):
-            app.run()
-        self.assertEqual(app.result.root.value["body"], {"user_id": 5})
+            app.options = options(actions="api.users.user_id")
+            with _stdio(io.StringIO()):
+                app.run()
+            self.assertEqual(app.result.root.value["body"], {"user_id": 5})
 
-        app.options = options(actions="api.users.user_id", params={"user_id": 9})
-        with _stdio(io.StringIO()):
-            app.run()
-        self.assertEqual(app.result.root.value["body"], {"user_id": 9})
+            app.options = options(actions="api.users.user_id", params={"user_id": 9})
+            with _stdio(io.StringIO()):
+                app.run()
+            self.assertEqual(app.result.root.value["body"], {"user_id": 9})
 
-        app.options = options(actions="api.users.user_id", user_id=7)
-        with _stdio(io.StringIO()):
-            app.run()
-        self.assertEqual(app.result.root.value["path"], "/users/7")
-        self.assertEqual(app.result.root.value["body"], {"user_id": 7})
+            app.options = options(actions="api.users.user_id", user_id=7)
+            with _stdio(io.StringIO()):
+                app.run()
+            self.assertEqual(app.result.root.value["path"], "/users/7")
+            self.assertEqual(app.result.root.value["body"], {"user_id": 7})
 
     def test_missing_parameter_and_http_error_fail_the_node(self):
         service = flask_service()
         app = App(config={})
-        app.include(service, prefix="api")
+        app.include(service, prefix="api", port=free_port())
         app.options = options(actions="api.users.user_id")
         with _stdio(io.StringIO(), io.StringIO()):
             with self.assertRaises(SystemExit) as caught:
@@ -173,10 +258,125 @@ class FlattenTest(unittest.TestCase):
         self.assertIn("user_id", app.result.root.error)
 
         app.options = options(actions="api.missing")
-        with _stdio(io.StringIO(), io.StringIO()):
-            with self.assertRaises(SystemExit):
-                app.run()
+        with running_service(app.router.route["api"]):
+            with _stdio(io.StringIO(), io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    app.run()
         self.assertIn("returned 404", app.result.root.error)
+
+    def test_requests_hit_the_service_that_is_already_running(self):
+        hits = {"n": 0}
+        service = Flask("lifetime")
+
+        @service.get("/health")
+        def health():
+            hits["n"] += 1
+            return {"n": hits["n"]}
+
+        router = flatten(service, port=free_port())
+        endpoint = router.route["health"]
+        ctx = Context({}, options())
+        with self.assertRaises(RuntimeError) as caught:
+            invoke_endpoint(endpoint, ctx)
+        self.assertIn("not running", str(caught.exception))
+
+        with running_service(router):
+            self.assertEqual(hits["n"], 0)
+            again = asyncio.run(serve_service(router, Context({}, options())))
+            self.assertEqual(again["status"], "running")
+            first = invoke_endpoint(endpoint, ctx)
+            second = invoke_endpoint(endpoint, ctx)
+        self.assertEqual(first["body"], {"n": 1})
+        self.assertEqual(second["body"], {"n": 2})
+        self.assertEqual(hits["n"], 2)
+        with self.assertRaises(RuntimeError) as caught:
+            invoke_endpoint(endpoint, ctx)
+        self.assertIn("not running", str(caught.exception))
+
+    def test_another_process_reaches_the_same_service(self):
+        port = free_port()
+        with tempfile.TemporaryDirectory() as directory:
+            app_path = Path(directory) / "app.py"
+            pid_path = Path(directory) / "pids"
+            app_path.write_text(textwrap.dedent(f'''
+                import os
+                from flask import Flask
+                from pyouter.app import App
+
+                service = Flask("svc")
+
+                @service.get("/health")
+                def health():
+                    with open({str(pid_path)!r}, "a") as handle:
+                        handle.write(str(os.getpid()) + "\\n")
+                    return {{"ok": True}}
+
+                app = App(config={{}})
+                app.include(service, prefix="api", port={port})
+                app.run()
+            '''))
+            env = os.environ.copy()
+            src = str(Path(__file__).resolve().parents[1])
+            env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
+            server = subprocess.Popen(
+                [sys.executable, str(app_path), "api"],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
+            )
+            try:
+                address = ServiceAddress("127.0.0.1", port)
+                for _ in range(100):
+                    if listening(address):
+                        break
+                    if server.poll() is not None:
+                        self.fail(server.stdout.read())
+                    time.sleep(0.05)
+                else:
+                    self.fail("service process did not listen")
+
+                def call(action):
+                    return subprocess.run(
+                        [sys.executable, str(app_path), action],
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                    )
+
+                first = call("api.health")
+                second = call("api.health")
+                self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+                self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+                self.assertIn("/health -> 200", first.stdout)
+                pids = [line for line in pid_path.read_text().splitlines() if line]
+                self.assertEqual(pids, [str(server.pid), str(server.pid)])
+                again = call("api")
+                self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+                self.assertIn("already running", again.stdout)
+                self.assertIsNone(server.poll())
+            finally:
+                if server.poll() is None:
+                    os.kill(server.pid, signal.SIGINT)
+                    server.wait(timeout=5)
+                if server.stdout is not None:
+                    server.stdout.close()
+            for _ in range(50):
+                if not listening(address):
+                    break
+                time.sleep(0.05)
+
+            missed = subprocess.run(
+                [sys.executable, str(app_path), "api.health"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            self.assertEqual(missed.returncode, 1, missed.stdout + missed.stderr)
+            self.assertIn("not running", missed.stdout + missed.stderr)
 
     def test_constructor_and_use_flatten(self):
         service = flask_service()
@@ -210,33 +410,27 @@ class FlattenTest(unittest.TestCase):
             flatten(service)
         self.assertIn("same pyouter node", str(caught.exception))
 
-    def test_root_and_sequence(self):
+    def test_route_group_does_not_call_endpoints(self):
         seen = []
-        service = Flask("flatten-root")
+        service = Flask("flatten-group")
 
-        @service.get("/")
-        def index():
-            seen.append("root")
-            return {"root": True}
+        @service.get("/users")
+        def list_users():
+            seen.append("users")
+            return {}
 
-        @service.get("/a")
-        def first():
-            seen.append("a")
-            return "a"
+        @service.get("/users/<int:user_id>")
+        def one(user_id):
+            seen.append(user_id)
+            return {}
 
-        @service.get("/b")
-        def second():
-            seen.append("b")
-            return "b"
-
-        router = flatten(service)
-        self.assertEqual(router.route["root"].rule, "/")
-        from pyouter.context import Context
-
+        router = flatten(service, port=free_port())
+        self.assertTrue(router.serves)
+        self.assertFalse(router.route["users"].serves)
         with _stdio(io.StringIO()):
-            result = asyncio.run(router.invoke("", Context({}, options())))
+            result = asyncio.run(router.route["users"].invoke("", Context({}, options())))
         self.assertTrue(result.ok)
-        self.assertEqual(seen, ["a", "b", "root"])
+        self.assertEqual(seen, [])
 
     def test_tree_describes_the_http_route(self):
         app = App(config={})
@@ -252,7 +446,7 @@ class FlattenTest(unittest.TestCase):
         api = find(tree, "api")
         self.assertEqual(api["kind"], "router")
         self.assertEqual(api["route_type"], "web")
-        self.assertEqual(api["target"], "flask")
+        self.assertEqual(api["target"], "http://127.0.0.1:5000")
 
         stdout = io.StringIO()
         with _stdio(stdout):
@@ -291,7 +485,7 @@ class FlattenTest(unittest.TestCase):
 
         api.mount("/sub", mounted_app)
         app = App(config={})
-        app.include(api, prefix="api")
+        app.include(api, prefix="api", port=free_port())
         mounted = app.router.route["api"]
         self.assertEqual(mounted.framework, "fastapi")
         self.assertNotIn("docs", mounted.route)
@@ -304,8 +498,9 @@ class FlattenTest(unittest.TestCase):
         self.assertEqual(list(mounted.route["users"].route), ["post", "user_id"])
 
         app.options = options(actions="api.users.user_id", user_id=4)
-        with _stdio(io.StringIO()):
-            app.run()
+        with running_service(mounted):
+            with _stdio(io.StringIO()):
+                app.run()
         self.assertEqual(app.result.root.value["body"], {"user_id": 4})
         self.assertEqual(app.result.root.value["path"], "/users/4")
 
@@ -313,13 +508,14 @@ class FlattenTest(unittest.TestCase):
             return JSONResponse({"ok": True})
 
         starlette_app = Starlette(routes=[Route("/health", homepage)])
-        starlette_router = flatten(starlette_app)
+        starlette_router = flatten(starlette_app, port=free_port())
         self.assertEqual(starlette_router.framework, "starlette")
         self.assertEqual(starlette_router.route["health"].rule, "/health")
         app.use(router=starlette_router)
         app.options = options(actions="health")
-        with _stdio(io.StringIO()):
-            app.run()
+        with running_service(starlette_router):
+            with _stdio(io.StringIO()):
+                app.run()
         self.assertEqual(app.result.root.value["body"], {"ok": True})
 
 
@@ -328,8 +524,9 @@ class WebFlattenTest(unittest.TestCase):
         self.stdout = sys.stdout
         self.stderr = sys.stderr
         app = App(config={})
-        app.include(flask_service(), prefix="api")
+        app.include(flask_service(), prefix="api", port=free_port())
         app.options = options()
+        self.app = app
         self.bridge = WebBridge(app, host="127.0.0.1", port=0, focus="api.health")
 
     def tearDown(self):
@@ -339,15 +536,40 @@ class WebFlattenTest(unittest.TestCase):
 
     def test_bridge_runs_a_flattened_node(self):
         self.bridge.install_capture()
-        asyncio.run(self.bridge.execute_path("api.health"))
+        with running_service(self.app.router.route["api"]):
+            asyncio.run(self.bridge.execute_path("api.health"))
         node = self.bridge.store.nodes["api.health"]
         self.assertEqual(node.status, "success")
         messages = [line["message"] for line in node.logs]
         self.assertTrue(any("GET /health" in message for message in messages))
-        self.assertTrue(any("GET /health -> 200" in message for message in messages))
+        self.assertTrue(any("/health -> 200" in message for message in messages))
+
+    def test_service_stays_up_while_a_route_runs(self):
+        self.bridge.install_capture()
+
+        async def scenario():
+            service = asyncio.create_task(self.bridge.execute_path("api"))
+            api = self.app.router.route["api"]
+            for _ in range(100):
+                if listening(api.address) and self.bridge.store.nodes["api"].status == "running":
+                    break
+                await asyncio.sleep(0.05)
+            else:
+                self.fail("service node did not stay running")
+            await self.bridge.execute_path("api.health")
+            self.assertEqual(self.bridge.store.nodes["api"].status, "running")
+            self.assertEqual(self.bridge.store.nodes["api.health"].status, "success")
+            service.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await service
+            self.assertEqual(self.bridge.store.nodes["api"].status, "cancelled")
+
+        asyncio.run(scenario())
 
     def test_http_snapshot_and_run(self):
         self.bridge.start()
+        service = running_service(self.app.router.route["api"])
+        service.__enter__()
         try:
             with urllib.request.urlopen(self.bridge.url + "/", timeout=3) as response:
                 html = response.read().decode("utf-8")
@@ -380,6 +602,7 @@ class WebFlattenTest(unittest.TestCase):
                 self.fail(f"api.health stuck at {None if last is None else last['status']}")
             self.assertEqual(last["status"], "success")
         finally:
+            service.__exit__(None, None, None)
             self.bridge.close()
 
 

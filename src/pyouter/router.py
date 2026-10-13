@@ -52,11 +52,14 @@ class Router(object):
         self.kind = "router"
         self.origin = "cli"
         self.framework = None
+        self.serves = False
+        self.address = None
+        self.app = None
         self.route = {}
         for key, value in routes.items():
             self.route[key] = _adopt(value)
 
-    def include(self, router, prefix=None):
+    def include(self, router, prefix=None, host=None, port=None):
         """Mount another router's routes on this one.
 
         Without ``prefix``, the child routes are copied onto this router and a
@@ -64,8 +67,19 @@ class Router(object):
         policy is not copied. With ``prefix``, that router is placed at the
         name; if the name is already a router, the routes are merged into it.
         A Flask or FastAPI application is flattened into routes first.
+        ``host`` and ``port`` are the address of that service.
         """
-        router = _as_router(router)
+        router = _as_router(router, host=host, port=port)
+        if getattr(router, "serves", False) and not prefix:
+            if self.route:
+                raise ValueError("include a web service with a prefix")
+            self.route = dict(router.route)
+            self.serves = True
+            self.origin = "web"
+            self.framework = router.framework
+            self.address = router.address
+            self.app = router.app
+            return self
         if prefix:
             current = self.route.get(prefix)
             if current is None:
@@ -126,6 +140,9 @@ class Router(object):
             config = getattr(self, "config", None)
             executor = getattr(self, "executor", None)
             ctx = Context(config, options, executor)
+
+        if (command is None or command == "") and getattr(self, "serves", False):
+            return await execute(self, _qualify(pre, ""), depth, ctx)
 
         node, rel, hops = self.resolve(command)
         for hop_path, hop_depth, hop_node in hops:
@@ -227,15 +244,17 @@ def node_kind(node):
     return "cli"
 
 
-def _adopt(value):
+def _adopt(value, host=None, port=None):
     from .flatten import adopt
-    return adopt(value)
+    return adopt(value, host=host, port=port)
 
 
-def _as_router(value):
+def _as_router(value, host=None, port=None):
     if isinstance(value, Router):
+        if host is not None or port is not None:
+            _adopt(value, host=host, port=port)
         return value
-    adopted = _adopt(value)
+    adopted = _adopt(value, host=host, port=port)
     if isinstance(adopted, Router):
         return adopted
     raise TypeError(
@@ -256,11 +275,53 @@ async def execute(node, path, depth, ctx):
 
     Router children run together unless that router's policy is ``sequence``.
     Child failures are recorded and do not stop the remaining children.
-    Cancellation still stops the node and is re-raised.
+    A web service node starts the server and leaves it listening. A route
+    group inside that service does not call its endpoints. Cancellation
+    still stops the node and is re-raised.
     """
     if isinstance(node, Router):
+        if getattr(node, "serves", False):
+            return await _execute_service(node, path, depth, ctx)
+        if getattr(node, "origin", None) == "web":
+            return await _execute_web_group(node, path, depth, ctx)
         return await _execute_router(node, path, depth, ctx)
     return await _execute_leaf(node, path, depth, ctx)
+
+
+async def _execute_service(node, path, depth, ctx):
+    from .flatten import serve_service
+
+    event = _event(node, path, depth, "serve")
+    await ctx.hooks.emit("before", event)
+    try:
+        value = await serve_service(node, ctx)
+    except asyncio.CancelledError:
+        event["result"] = NodeResult(path, "cancelled")
+        await ctx.hooks.emit("after", event)
+        raise
+    except Exception as exc:
+        result = NodeResult(path, "error", error=str(exc), exc_type=type(exc).__name__)
+        event["result"] = result
+        event["traceback"] = traceback.format_exc().rstrip()
+        await ctx.hooks.emit("on_error", event)
+        await ctx.hooks.emit("after", event)
+        return result
+    result = NodeResult(path, "success", value=value)
+    event["result"] = result
+    await ctx.hooks.emit("after", event)
+    return result
+
+
+async def _execute_web_group(node, path, depth, ctx):
+    """A path prefix of a web service. Running it does not call the endpoints."""
+    event = _event(node, path, depth, "group")
+    await ctx.hooks.emit("before", event)
+    url = node.address.base_url if getattr(node, "address", None) else ""
+    print(f"web routes at {url}")
+    result = NodeResult(path, "success", value={"url": url})
+    event["result"] = result
+    await ctx.hooks.emit("after", event)
+    return result
 
 
 async def _execute_router(node, path, depth, ctx):

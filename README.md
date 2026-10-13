@@ -193,16 +193,23 @@ app.run()
 ```
 
 ```shell
+python app.py api
 python app.py api.health
 python app.py api.users.user_id --user-id 7
 python app.py --tasks
 ```
 
-`api.health` is `GET /health`. `api.users.user_id` is `GET /users/<int:user_id>`. A path parameter is taken from an option of the same name, from `options.params`, or from config. Several methods on one path become `get`, `post`, and the other method names. Running a flattened node calls that endpoint in-process and returns `status`, `body`, `method`, and `path`. A response of 400 or higher fails the node. `flatten(service)` returns the same router when you want to mount it yourself.
+`python app.py api` starts the Flask application and leaves it listening on `127.0.0.1:5000`. That process stays up. A later `python app.py api.health` does not start the application again. It sends `GET /health` to the service that is already listening, then exits. The same is true for `api.users.user_id`, which is `GET /users/<int:user_id>`.
 
-FastAPI applications flatten the same way. `GET /users/{user_id}` becomes `users.user_id`.
+A path parameter is taken from an option of the same name, from `options.params`, or from config. Several methods on one path become `get`, `post`, and the other method names. The request returns `status`, `body`, `method`, and `path`. A response of 400 or higher fails the node. If nothing is listening, the route fails and tells you to start the service node. Running the service node again, while it is already listening, reports that and leaves the existing process alone.
+
+`app.include(service, prefix="api", port=5000)` selects the address. `flatten(service, port=5000)` returns the same router when you want to mount it yourself. A FastAPI application listens on `127.0.0.1:8000` unless you pass a port, and starting it needs `uvicorn`. `GET /users/{user_id}` becomes `users.user_id`.
 
 ## What's new
+
+### 0.3.1
+
+* a flattened web service stays listening; route nodes send requests to it
 
 ### 0.3.0
 
