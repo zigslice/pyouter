@@ -50,13 +50,14 @@ class SSH(Router):
     tests can substitute a fake. The connection does not ask for a password.
     """
 
-    def __init__(self, host, routes=None, user=None, port=None, identity=None, forwards=None, ssh="ssh", workers=1, balancer="uvicorn"):
+    def __init__(self, host, routes=None, user=None, port=None, identity=None, forwards=None, ssh="ssh", workers=1, balancer="uvicorn", runtime=None):
         super().__init__()
         from .balance import normalize_balancer, normalize_workers
         self.origin = "ssh"
         self.layer = "ssh"
         self.balancer = normalize_balancer(balancer)
         self.workers = normalize_workers(workers)
+        self.runtime = runtime
         self.hostname = _hostname(host)
         self.user = _user(user)
         self.port = _port(port)

@@ -1,10 +1,15 @@
 import concurrent.futures
+import os
+import signal
+import subprocess
+import sys
 import time
 import unittest
 
 from pyouter.balance import boot_argv, register_provider, start_pool
 from pyouter.docker import Container
-from pyouter.layer import plan
+from pyouter.layer import Layer, plan
+from pyouter.node import call, deploy_tree, health, push, shutdown
 from pyouter.router import Router
 from pyouter.ssh import SSH
 
@@ -77,15 +82,39 @@ class LayerPlanTests(unittest.TestCase):
         self.assertEqual(boot_argv(box)[4], "near")
         self.assertEqual(boot_argv(box)[6], "2")
 
+    def test_a_layer_without_a_runtime_is_not_pushed(self):
+        with self.assertRaises(ValueError) as caught:
+            deploy_tree(_tree())
+        self.assertIn("no runtime", str(caught.exception))
+
     def test_an_unknown_balancer_is_rejected_when_the_pool_starts(self):
         with self.assertRaises(ValueError):
             start_pool(provider="missing", workers=1)
 
 
 class LoadBalanceTests(unittest.TestCase):
+    def test_a_pushed_slice_serves_from_the_node_runtime(self):
+        root = _tree()
+        with _Runtime() as edge, _Runtime() as jump, _Runtime() as inner, _Runtime() as api:
+            root.route["cli"].route["box"].runtime = edge
+            root.route["cli"].route["box"].route["host"].runtime = jump
+            root.route["cli"].route["box"].route["host"].route["box"].runtime = inner
+            root.route["cli"].route["box"].route["host"].route["box"].route["api"].runtime = api
+            sent = deploy_tree(root)
+            self.assertEqual(
+                [item["path"] for item in sent],
+                ["cli.box", "cli.box.host", "cli.box.host.box", "cli.box.host.box.api"],
+            )
+            self.assertEqual([item["workers"] for item in sent], [2, 2, 3, 4])
+            self.assertEqual(
+                [health(url)["path"] for url in (edge, jump, inner, api)],
+                ["cli.box", "cli.box.host", "cli.box.host.box", "cli.box.host.box.api"],
+            )
+
     def test_more_workers_finish_concurrent_calls_sooner(self):
-        single = _measure(workers=1, calls=4, hold=0.3)
-        multi = _measure(workers=4, calls=4, hold=0.3)
+        with _Runtime() as url:
+            single = _measure(url, workers=1, calls=4, hold=0.3)
+            multi = _measure(url, workers=4, calls=4, hold=0.3)
         print(
             f"BENCH workers=1 elapsed={single['elapsed']:.3f} pids={single['pids']} "
             f"workers=4 elapsed={multi['elapsed']:.3f} pids={multi['pids']}"
@@ -113,19 +142,54 @@ class LoadBalanceTests(unittest.TestCase):
             pool.close()
 
 
-def _measure(workers, calls, hold):
-    pool = start_pool(workers=workers)
-    try:
-        pool.call({"path": "warm", "hold": 0})
-        started = time.perf_counter()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=calls) as pool_threads:
-            bodies = list(pool_threads.map(
-                lambda _index: pool.call({"path": "work", "hold": hold}),
-                range(calls),
-            ))
-        elapsed = time.perf_counter() - started
-    finally:
-        pool.close()
+class _Runtime:
+    """One physical-node runtime started the way a node would start it."""
+
+    def __enter__(self):
+        env = os.environ.copy()
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
+        self.proc = subprocess.Popen(
+            [sys.executable, "-m", "pyouter.node", "--port", "0"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        line = self.proc.stdout.readline()
+        if not line.startswith("node "):
+            raise RuntimeError(line or "node runtime did not start")
+        self.url = f"http://127.0.0.1:{int(line.split()[1])}"
+        return self.url
+
+    def __exit__(self, exc_type, exc, tb):
+        shutdown(self.url)
+        if self.proc.poll() is None:
+            try:
+                os.killpg(self.proc.pid, signal.SIGINT)
+            except OSError:
+                self.proc.terminate()
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+                self.proc.wait(timeout=5)
+        if self.proc.stdout is not None:
+            self.proc.stdout.close()
+        return False
+
+
+def _measure(url, workers, calls, hold):
+    push(url, Layer("bench", "server", "uvicorn", workers))
+    call(url, {"path": "warm", "hold": 0})
+    started = time.perf_counter()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=calls) as pool_threads:
+        bodies = list(pool_threads.map(
+            lambda _index: call(url, {"path": "work", "hold": hold}),
+            range(calls),
+        ))
+    elapsed = time.perf_counter() - started
     return {"elapsed": elapsed, "pids": sorted({item["pid"] for item in bodies})}
 
 
