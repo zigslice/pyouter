@@ -84,7 +84,7 @@ class _Record:
         self.doc = doc or ""
 
 
-def flatten(service, host="127.0.0.1", port=None, balancer="uvicorn", workers=1):
+def flatten(service, host="127.0.0.1", port=None, balancer="uvicorn", workers=1, runtime=None):
     """Return a router whose leaves are the HTTP routes of ``service``.
 
     ``service`` is a Flask application or a FastAPI (or Starlette)
@@ -107,6 +107,7 @@ def flatten(service, host="127.0.0.1", port=None, balancer="uvicorn", workers=1)
     router.layer = "server"
     router.balancer = normalize_balancer(balancer)
     router.workers = normalize_workers(workers)
+    router.runtime = runtime
     return router
 
 

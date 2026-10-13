@@ -360,16 +360,41 @@ app.include(Router(cli=Router(box=edge)))
 
 The provider is an internal detail of the pool. You set `balancer` and `workers`. Replacing the provider is `register_provider(name, start)` and passing that name as `balancer`.
 
-One measured run, 4 concurrent calls, each occupying its process for 0.3s:
+## deploy
+
+Each physical node runs a runtime before any slice arrives. The tree names that runtime with `runtime`. Pushing the tree sends each layer to its own runtime. The runtime starts that layer's pool and serves calls for it. A later push replaces the pool.
+
+```python
+edge = Container("python:3.12-slim", routes=..., workers=2, runtime="http://10.0.0.4:7710")
+jump = SSH("10.0.0.9", routes=..., workers=2, runtime="http://10.0.0.9:7710")
+api = flatten(service, workers=4, runtime="http://10.0.0.9:7711")
+```
+
+`python -m pyouter.node --port 7710` is the process left running on the node. The control process calls `deploy_tree(app.router)`. A node with no `runtime` is not deployed.
+
+| | pyouter | Kubernetes |
+| --- | --- | --- |
+| what is placed | one layer of the tree | a pod |
+| who chooses the machine | the `runtime` written on that layer | the scheduler |
+| what is already on the machine | a runtime listening for a slice | a kubelet reconciling pod specs |
+| what starts the work | the runtime starts that layer's pool | the kubelet starts containers from images |
+| what a second push does | replaces the pool serving that slice | reconciles toward the new spec |
+
+One measured run after a slice was pushed to a node runtime. Four concurrent calls each occupy a process for 0.3s:
 
 | workers | calls | hold | elapsed | processes used | speedup |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 4 | 0.3s | 1.206s | 1 | 1 |
-| 4 | 4 | 0.3s | 0.304s | 4 | 3.97 |
+| 1 | 4 | 0.3s | 1.205s | 1 | 1 |
+| 4 | 4 | 0.3s | 0.305s | 4 | 3.95 |
 
 Four processes finish the same concurrent work in about a quarter of the time. One process runs the calls one after another. The test requires the larger pool to be at least 1.5 times faster.
 
 ## What's new
+
+### 0.9.0
+
+* a node runtime stays up on a physical node and receives the layer pushed to it
+* `deploy_tree` sends each layer to the `runtime` named on that layer, and the runtime starts that layer's pool
 
 ### 0.8.0
 
