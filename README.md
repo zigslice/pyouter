@@ -128,6 +128,27 @@ if __name__=="__main__":
     
 ```
 
+## framework
+
+An application is a router tree plus one context per run. `use()` replaces the tree. `include()` mounts another tree, optionally under a prefix. A leaf is still a function or an object with `run`. A single parameter receives a `Context`; two parameters keep the `(config, options)` form. An object's `run` method follows the same rule.
+
+```python
+from pyouter.app import App
+from pyouter.router import Router
+
+async def hello(ctx):
+    ctx.log(ctx.config["name"])
+    return ctx.options.debug
+
+app = App(config={"name": "pyouter"})
+app.include(Router(hello=hello))
+app.run()  # python app.py hello
+```
+
+After a run, `app.result.exit_code` is 1 when a node fails, and `run()` raises `SystemExit`. A context action's return value is `app.result.root.value` when that action is the node that was executed.
+
+Router nodes run their children in parallel. `policy="sequence"` runs them in order. Child failures are collected into `app.result` and the process exits with code 1. `ctx.cancelled` is set when a local web run is stopped.
+
 ## local web
 
 https://cursor.com/artifacts/v/art-1cdde7f3-5756-49a3-97ac-2d54dc193da9
@@ -145,6 +166,13 @@ The left column is the route tree. The right panel shows the selected node's sta
 `app.web()` starts the same page from Python. `--host` defaults to localhost; binding another interface exposes task execution on that interface.
 
 ## What's new
+
+### 0.2.0
+
+* one dispatcher shared by the command line and the local web ui
+* `Context` and `RunResult` for each run; context actions take `ctx`
+* `include()` mounts routers; `policy="sequence"` runs children in order
+* a failed child sets exit code 1
 
 ### 0.1.2
 

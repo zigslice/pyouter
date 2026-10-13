@@ -1,18 +1,21 @@
 
 from typing import Any
 import asyncio
+import sys
 
+from pyouter.context import Context, Hooks, RunResult
 from pyouter.default import create_parser
 from pyouter.errors import NotInit
 from pyouter.router import Router
 
 class App(object):
-    def __init__(self, config=None, parser=None):
+    def __init__(self, config=None, parser=None, executor=None):
         opt_parser = parser if parser is not None else create_parser("tasks router runner")
         
         self.opt_parser = opt_parser
         self.options = None
-        self.executor = None
+        self.executor = executor
+        self.result = None
         
         if config is None:
             self.config = {}
@@ -26,19 +29,47 @@ class App(object):
             raise NotInit("config type unknonw")
             
         self.router: Router
+
+    def _require_router(self):
+        if not hasattr(self, "router") or self.router is None:
+            raise NotInit("self.router in App")
     
     def use(self, router: Router):
+        """Replace the application's router."""
         self.router = router
+        return self
+
+    def include(self, router: Router, prefix=None):
+        """Mount ``router`` on the application router.
+
+        The first call sets the router. Later calls merge routes. ``prefix``
+        mounts them under that name.
+        """
+        if not isinstance(router, Router):
+            raise TypeError("include() expects a Router")
+        if not hasattr(self, "router") or self.router is None:
+            if prefix:
+                self.router = Router()
+                self.router.include(router, prefix=prefix)
+            else:
+                self.router = router
+            return self
+        self.router.include(router, prefix=prefix)
         return self
     
     def option(self, *args: Any, **kwds: Any):
         self.opt_parser.add_argument(*args, **kwds)
         return self
 
+    def _context(self):
+        hooks = Hooks()
+        hooks.before.append(_view_hook(self.options))
+        hooks.on_error.append(_cli_error_hook)
+        return Context(self.config, self.options, self.executor, hooks)
+
     def web(self, host="127.0.0.1", port=8765, open_browser=True, focus=None):
         """Start the local web ui for this app's router."""
-        if self.router is None:
-            raise NotInit("self.router in App")
+        self._require_router()
 
         if self.config is None:
             raise NotInit("self.config in App")
@@ -59,8 +90,7 @@ class App(object):
         return self
 
     def run(self):
-        if self.router is None:
-            raise NotInit("self.router in App")
+        self._require_router()
         
         if self.config is None:
             raise NotInit("self.config in App")
@@ -92,6 +122,44 @@ class App(object):
             for task in self.router.tasks():
                 print(task)
         else:
-            asyncio.get_event_loop().run_until_complete(self.router.dispatch('', self.options.actions, 0))
+            node_result = asyncio.run(
+                self.router.dispatch("", self.options.actions, 0, self._context())
+            )
+            self.result = RunResult(node_result)
+            if not node_result.ok:
+                raise SystemExit(self.result.exit_code)
         
         return self
+
+
+def _view_hook(options):
+    def hook(event):
+        if options is None:
+            return
+        show = getattr(options, "view", False) or getattr(options, "tree", False)
+        if not show:
+            return
+        role = event.get("role")
+        if role == "hop":
+            label = "router"
+        elif role == "fanout":
+            label = "router2"
+        elif role == "action":
+            label = "action"
+        else:
+            return
+        prefix = "  " * event.get("depth", 0) if getattr(options, "tree", False) else ""
+        print(f"[pyouter] {prefix}->{label}: {event['path']}")
+    return hook
+
+
+def _cli_error_hook(event):
+    if event.get("role") != "action":
+        return
+    traceback_text = event.get("traceback")
+    if traceback_text:
+        print(traceback_text, file=sys.stderr)
+        return
+    result = event.get("result")
+    if result is not None and result.error:
+        print(f"[pyouter] {event['path']}: {result.error}", file=sys.stderr)
