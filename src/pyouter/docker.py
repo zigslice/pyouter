@@ -1,15 +1,18 @@
-"""A Docker container as a pyouter node, with the routes inside it.
+"""Docker containers and Compose projects as pyouter nodes.
 
-The container is one node. Commands and HTTP services declared under it are
+A container is one node. Commands and HTTP services declared under it are
 child nodes, so ``a.b.c.d`` reaches a command or a service inside the
-container named ``b``. Running the container node starts it and waits.
-Running a child uses that container; it does not start another one.
+container named ``b``. A Compose file is a project node whose services are
+children. Running the project starts the stack and waits. A command under
+``web`` runs in that service; it does not start another stack.
 """
 
 import asyncio
 import hashlib
+import json
 import re
 import subprocess
+from pathlib import Path
 from urllib.parse import urlparse
 
 from .flatten import ServiceAddress, invoke_endpoint
@@ -58,11 +61,8 @@ class PublishedRoute:
         container = self.container
         if container is None:
             raise RuntimeError("route is not inside a container")
-        if not container_running(container):
-            raise RuntimeError(
-                f"container {container.container_name} is not running; "
-                "start it by running the container node"
-            )
+        if not host_running(container):
+            raise RuntimeError(host_down_message(container))
         return invoke_endpoint(self, ctx)
 
     def __repr__(self):
@@ -118,24 +118,87 @@ class Container(Router):
 
     def include(self, router, prefix=None, host=None, port=None):
         super().include(router, prefix=prefix, host=host, port=port)
-        _bind(self, self)
+        _bind_host(self, self)
         return self
 
 
+class ComposeService(Router):
+    """One service from a Compose file.
+
+    Running it reports the service. It does not start the project and it
+    does not call the commands under it.
+    """
+
+    def __init__(self, project, name, image, ports):
+        super().__init__()
+        self.origin = "compose-service"
+        self.project = project
+        self.service_name = name
+        self.image = image or ""
+        self.ports = tuple(ports)
+        self.docker = project.docker
+
+    def include(self, router, prefix=None, host=None, port=None):
+        super().include(router, prefix=prefix, host=host, port=port)
+        _bind_host(self, self)
+        return self
+
+
+class Compose(Router):
+    """A Compose project. Each service in the file is a child node.
+
+    ``routes`` adds commands and HTTP routes onto those services, keyed by
+    service name. ``web=Router(ping=Command("echo", "ok"))`` makes
+    ``stack.web.ping`` run inside the ``web`` service. Mount the project
+    with a prefix, because that prefix is the node that starts the stack.
+
+    Reading a ``.yml`` or ``.yaml`` file needs PyYAML. A ``.json`` Compose
+    file uses the standard library.
+    """
+
+    def __init__(self, file, routes=None, project=None, docker="docker"):
+        super().__init__()
+        path = Path(file)
+        if not path.is_file():
+            raise ValueError(f"compose file not found: {file}")
+        data = _load_compose(path)
+        services = data["services"]
+        self.origin = "compose"
+        self.file = str(path.resolve())
+        self.project_name = _project_name(project, data, path)
+        self.docker = docker
+        self._owns = False
+        user = _user_routes(routes, services)
+        for name, spec in services.items():
+            image, ports = _service_meta(spec)
+            service = ComposeService(self, name, image, ports)
+            extra = user.get(name)
+            if extra is not None:
+                service.include(extra)
+            self.route[name] = service
+
+    def _base(self):
+        return ["compose", "-f", self.file, "-p", self.project_name]
+
+
 def exec_command(node):
-    """Run ``node`` inside its container. The container is not started here."""
-    container = getattr(node, "container", None)
-    if container is None:
+    """Run ``node`` inside its container or Compose service.
+
+    The container or project is not started here.
+    """
+    host = getattr(node, "container", None)
+    if host is None:
         raise RuntimeError("command is not inside a container")
-    if not container_running(container):
-        raise RuntimeError(
-            f"container {container.container_name} is not running; "
-            "start it by running the container node"
-        )
-    result = _docker(
-        container,
-        ["exec", container.container_name, *node.argv],
-    )
+    if not host_running(host):
+        raise RuntimeError(host_down_message(host))
+    if isinstance(host, ComposeService):
+        project = host.project
+        argv = [*project._base(), "exec", "-T", host.service_name, *node.argv]
+        label = f"{project.project_name}/{host.service_name}"
+        result = _docker(project, argv)
+    else:
+        label = host.container_name
+        result = _docker(host, ["exec", host.container_name, *node.argv])
     if result.out:
         print(result.out, end="" if result.out.endswith("\n") else "\n")
     if result.code != 0:
@@ -147,10 +210,39 @@ def exec_command(node):
             message = f"{message}: {detail}"
         raise RuntimeError(message)
     return {
-        "container": container.container_name,
+        "container": label,
         "argv": list(node.argv),
         "output": result.out,
     }
+
+
+def host_running(node):
+    """Return whether the container or Compose project for ``node`` is up."""
+    if isinstance(node, ComposeService):
+        return project_running(node.project)
+    return container_running(node)
+
+
+def host_down_message(node):
+    if isinstance(node, ComposeService):
+        return (
+            f"compose project {node.project.project_name} is not running; "
+            "start it by running the compose node"
+        )
+    return (
+        f"container {node.container_name} is not running; "
+        "start it by running the container node"
+    )
+
+
+def project_running(project):
+    """Return whether any service in ``project`` is running."""
+    result = _docker(
+        project,
+        [*project._base(), "ps", "--status", "running", "-q"],
+        check=False,
+    )
+    return result.code == 0 and bool(result.out.strip())
 
 
 def container_running(node):
@@ -201,6 +293,33 @@ async def start_container(node, ctx):
     return {"status": "stopped", "container": node.container_name}
 
 
+async def start_compose(node, ctx):
+    """Start ``node`` and keep the stack until cancelled.
+
+    A second call while the project is already running does not start
+    another stack. Stopping this call removes only a stack this call started.
+    """
+    if await asyncio.to_thread(project_running, node):
+        print(f"compose project already running: {node.project_name}")
+        return {"status": "running", "project": node.project_name}
+
+    node._owns = True
+    try:
+        await asyncio.to_thread(_docker, node, [*node._base(), "up", "-d"])
+        print(f"compose project {node.project_name}")
+        while await asyncio.to_thread(project_running, node):
+            if ctx is not None and getattr(ctx, "cancelled", False):
+                break
+            await asyncio.sleep(0.05)
+    finally:
+        if node._owns:
+            await asyncio.to_thread(_docker, node, [*node._base(), "down"], False)
+            node._owns = False
+    if ctx is not None and getattr(ctx, "cancelled", False):
+        raise asyncio.CancelledError()
+    return {"status": "stopped", "project": node.project_name}
+
+
 class _Result:
     def __init__(self, code, out, err):
         self.code = code
@@ -242,16 +361,108 @@ def _container_exists(node):
     return result.code == 0
 
 
-def _bind(container, node):
-    if isinstance(node, Router) and getattr(node, "origin", None) == "docker" and node is not container:
+def _bind_host(host, node):
+    origin = getattr(node, "origin", None)
+    if (
+        isinstance(node, Router)
+        and node is not host
+        and origin in {"docker", "compose", "compose-service"}
+    ):
         return
     if isinstance(node, (Command, PublishedRoute)):
-        node.container = container
+        node.container = host
         return
     if isinstance(node, Router):
-        node.container = container
         for child in node.route.values():
-            _bind(container, child)
+            _bind_host(host, child)
+
+
+def _load_compose(path):
+    text = path.read_text(encoding="utf-8")
+    if path.suffix.lower() == ".json":
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"compose file is not valid JSON: {path}") from exc
+    else:
+        try:
+            import yaml
+        except ImportError as exc:
+            raise RuntimeError("reading a compose file needs PyYAML") from exc
+        data = yaml.safe_load(text)
+    if not isinstance(data, dict):
+        raise ValueError("compose file must be a mapping")
+    services = data.get("services")
+    if not isinstance(services, dict) or not services:
+        raise ValueError("compose file has no services")
+    for name, spec in services.items():
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
+            raise ValueError(
+                f"compose service '{name}' cannot be a route segment; "
+                "use letters, digits, '_' or '-'"
+            )
+        if not isinstance(spec, dict):
+            raise ValueError(f"compose service '{name}' must be a mapping")
+    return data
+
+
+def _user_routes(routes, services):
+    if routes is None:
+        return {}
+    if not isinstance(routes, Router):
+        raise TypeError("compose routes must be a Router keyed by service name")
+    unknown = [key for key in routes.route if key not in services]
+    if unknown:
+        raise ValueError(f"compose file has no service '{unknown[0]}'")
+    for key, value in routes.route.items():
+        if not isinstance(value, Router) or getattr(value, "origin", None) in {"docker", "compose"}:
+            raise TypeError(f"routes for service '{key}' must be a router of commands or HTTP routes")
+    return routes.route
+
+
+def _project_name(project, data, path):
+    if project is None:
+        named = data.get("name")
+        project = named if isinstance(named, str) and named else path.stem
+    return _container_name(project, project)
+
+
+def _service_meta(spec):
+    image = spec.get("image") or ""
+    if not isinstance(image, str):
+        image = ""
+    return image, _compose_ports(spec.get("ports"))
+
+
+def _compose_ports(ports):
+    if ports is None:
+        return ()
+    if isinstance(ports, (str, int, dict)):
+        ports = [ports]
+    found = []
+    for item in ports:
+        text = _port_text(item)
+        if text:
+            found.append(text)
+    return tuple(found)
+
+
+def _port_text(item):
+    if isinstance(item, int):
+        return str(item)
+    if isinstance(item, str):
+        text = item.strip()
+        return text or None
+    if isinstance(item, dict):
+        published = item.get("published")
+        target = item.get("target")
+        if published is not None and target is not None:
+            return f"{published}:{target}"
+        if published is not None:
+            return str(published)
+        if target is not None:
+            return str(target)
+    return None
 
 
 def _container_name(name, image):

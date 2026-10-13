@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 from pyouter.app import App
 from pyouter.context import Context
-from pyouter.docker import Command, Container, Service, container_running, start_container
+from pyouter.docker import Command, Compose, Container, Service, container_running, start_compose, start_container
 from pyouter.router import Router, node_kind
 from pyouter.web import WebBridge, build_tree
 from pyouter.web_page import render_page
@@ -112,6 +112,61 @@ def write_fake_docker(directory):
             else:
                 sys.stdout.write(" ".join(argv[2:]) + "\\n")
             sys.exit(0)
+        if argv[0] == "compose":
+            args = argv[1:]
+            project = None
+            positionals = []
+            index = 0
+            while index < len(args):
+                if args[index] in ("-f", "-p") and index + 1 < len(args):
+                    if args[index] == "-p":
+                        project = args[index + 1]
+                    index += 2
+                    continue
+                positionals.append(args[index])
+                index += 1
+            if not project or not positionals:
+                sys.exit(2)
+            data = load()
+            projects = data.setdefault("projects", {{}})
+            command_name = positionals[0]
+            if command_name == "up":
+                if projects.get(project, {{}}).get("running"):
+                    sys.stderr.write("already running\\n")
+                    sys.exit(1)
+                projects[project] = {{"running": True, "exec": []}}
+                save(data)
+                sys.stdout.write(project + "\\n")
+                sys.exit(0)
+            if command_name == "down":
+                projects.pop(project, None)
+                save(data)
+                sys.exit(0)
+            if command_name == "ps":
+                info = projects.get(project)
+                if info and info.get("running"):
+                    sys.stdout.write("cid\\n")
+                sys.exit(0)
+            if command_name == "exec":
+                rest = positionals[1:]
+                if rest and rest[0] == "-T":
+                    rest = rest[1:]
+                if not rest:
+                    sys.exit(2)
+                service = rest[0]
+                command = rest[1:]
+                info = projects.get(project)
+                if not info or not info.get("running"):
+                    sys.stderr.write("project is not running\\n")
+                    sys.exit(1)
+                info["exec"].append([service] + command)
+                save(data)
+                if command[:1] == ["echo"]:
+                    sys.stdout.write(" ".join(command[1:]) + "\\n")
+                else:
+                    sys.stdout.write(" ".join(command) + "\\n")
+                sys.exit(0)
+            sys.exit(2)
         sys.stderr.write("unknown\\n")
         sys.exit(2)
     ''').lstrip())
@@ -130,6 +185,77 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         return
+
+
+class running_compose:
+    def __init__(self, node):
+        self.node = node
+        self.ctx = Context({}, options())
+        self.loop = asyncio.new_event_loop()
+        self.ready = threading.Event()
+        self.task = None
+        self.thread = None
+        self.failure = None
+
+    def __enter__(self):
+        self.thread = threading.Thread(target=self._main, daemon=True)
+        self.thread.start()
+        if not self.ready.wait(8):
+            self._stop()
+            raise RuntimeError("timed out waiting for the compose project")
+        if self.failure is not None:
+            self._stop()
+            raise self.failure
+        from pyouter.docker import project_running
+        if not project_running(self.node):
+            self._stop()
+            raise RuntimeError("compose project is not running")
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._stop()
+        return False
+
+    def _main(self):
+        asyncio.set_event_loop(self.loop)
+        self.task = self.loop.create_task(start_compose(self.node, self.ctx))
+
+        async def watch():
+            from pyouter.docker import project_running
+            for _ in range(200):
+                if self.task.done() or project_running(self.node):
+                    return
+                await asyncio.sleep(0.025)
+
+        try:
+            self.loop.run_until_complete(watch())
+            self.ready.set()
+            self.loop.run_until_complete(self.task)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            self.failure = exc
+            self.ready.set()
+        finally:
+            if self.task is not None and not self.task.done():
+                self.task.cancel()
+                try:
+                    self.loop.run_until_complete(self.task)
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if not self.loop.is_closed():
+                self.loop.close()
+
+    def _stop(self):
+        self.ctx.cancel()
+        loop = self.loop
+        if loop.is_running():
+            def cancel():
+                if self.task is not None and not self.task.done():
+                    self.task.cancel()
+            loop.call_soon_threadsafe(cancel)
+        if self.thread is not None:
+            self.thread.join(5)
 
 
 class running_container:
@@ -294,6 +420,146 @@ class DockerTest(unittest.TestCase):
         page = render_page({"focus": "", "script": "app.py"})
         self.assertIn("容器", page)
         self.assertIn("命令", page)
+        self.assertIn("编排", page)
+
+    def test_compose_file_becomes_service_nodes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docker, state = write_fake_docker(directory)
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            port = httpd.server_address[1]
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            compose_path = Path(directory) / "compose.yaml"
+            compose_path.write_text(textwrap.dedent("""
+                name: demo
+                services:
+                  web:
+                    image: nginx:alpine
+                    ports:
+                      - "8080:80"
+                  worker:
+                    image: alpine:3
+                    command: sleep infinity
+                  api:
+                    image: python:3
+                    ports:
+                      - target: 8000
+                        published: 9000
+            """))
+            try:
+                stack = Compose(
+                    compose_path,
+                    project="demo",
+                    docker=str(docker),
+                    routes=Router(
+                        web=Router(ping=Command("echo", "web")),
+                        api=Service(
+                            f"http://127.0.0.1:{port}",
+                            health=("GET", "/health"),
+                        ),
+                    ),
+                )
+                app = App(config={})
+                app.include(stack, prefix="stack")
+                self.assertEqual(node_kind(app.router.route["stack"]), "compose")
+                web = app.router.route["stack"].route["web"]
+                self.assertEqual(node_kind(web), "docker")
+                self.assertEqual(web.image, "nginx:alpine")
+                self.assertEqual(web.ports, ("8080:80",))
+                self.assertEqual(app.router.route["stack"].route["api"].ports, ("9000:8000",))
+                self.assertEqual(node_kind(web.route["ping"]), "docker")
+                self.assertEqual(
+                    sorted(app.router.tasks()),
+                    ["stack.api.health", "stack.web.ping"],
+                )
+                self.assertIs(web.route["ping"].container, web)
+
+                ping = web.route["ping"]
+                ctx = Context({}, options())
+                with self.assertRaises(RuntimeError) as caught:
+                    ping.run(ctx)
+                self.assertIn("compose project demo is not running", str(caught.exception))
+
+                with running_compose(stack):
+                    again = asyncio.run(start_compose(stack, Context({}, options())))
+                    self.assertEqual(again, {"status": "running", "project": "demo"})
+                    stdout = io.StringIO()
+                    with _stdio(stdout):
+                        value = ping.run(ctx)
+                    self.assertEqual(value["output"].strip(), "web")
+                    self.assertEqual(value["container"], "demo/web")
+                    self.assertIn("web", stdout.getvalue())
+                    recorded = json.loads(state.read_text())
+                    self.assertEqual(recorded["projects"]["demo"]["exec"], [["web", "echo", "web"]])
+
+                    app.options = options(actions="stack.web")
+                    with _stdio(io.StringIO()) as service_out:
+                        app.run()
+                    self.assertEqual(app.result.root.value["service"], "web")
+                    self.assertEqual(service_out.stdout.getvalue().strip(), "compose service web 8080:80")
+                    self.assertEqual(
+                        json.loads(state.read_text())["projects"]["demo"]["exec"],
+                        [["web", "echo", "web"]],
+                    )
+
+                    app.options = options(actions="stack.api.health")
+                    with _stdio(io.StringIO()):
+                        app.run()
+                    self.assertEqual(app.result.root.value["body"], {"path": "/health"})
+
+                    tree = build_tree(app.router)
+                    project = _find(tree, "stack")
+                    self.assertEqual(project["route_type"], "compose")
+                    self.assertEqual(project["target"], "demo")
+                    service = _find(tree, "stack.web")
+                    self.assertEqual(service["route_type"], "docker")
+                    self.assertEqual(service["target"], "nginx:alpine 8080:80")
+
+                self.assertNotIn("demo", json.loads(state.read_text()).get("projects", {}))
+                with self.assertRaises(RuntimeError) as caught:
+                    ping.run(ctx)
+                self.assertIn("not running", str(caught.exception))
+            finally:
+                httpd.shutdown()
+                thread.join(3)
+                httpd.server_close()
+
+        with tempfile.TemporaryDirectory() as directory:
+            dotted = Path(directory) / "compose.yaml"
+            dotted.write_text("services:\n  my.web:\n    image: nginx\n")
+            with self.assertRaises(ValueError):
+                Compose(dotted)
+            missing = Path(directory) / "missing.yaml"
+            missing.write_text("services:\n  web:\n    image: nginx\n")
+            with self.assertRaises(ValueError):
+                Compose(missing, routes=Router(gone=Router()))
+            app = App(config={})
+            with self.assertRaises(ValueError):
+                app.include(Compose(missing))
+
+    def test_running_a_compose_service_leaves_its_commands_idle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            docker, _state = write_fake_docker(directory)
+            compose_path = Path(directory) / "compose.yaml"
+            compose_path.write_text("name: demo\nservices:\n  web:\n    image: nginx:alpine\n")
+            stack = Compose(
+                compose_path,
+                project="demo",
+                docker=str(docker),
+                routes=Router(web=Router(ping=Command("echo", "web"))),
+            )
+            app = App(config={})
+            app.include(stack, prefix="stack")
+            app.options = options()
+            bridge = WebBridge(app, host="127.0.0.1", port=0)
+            bridge.install_capture()
+            try:
+                with running_compose(stack):
+                    asyncio.run(bridge.execute_path("stack.web"))
+                self.assertEqual(bridge.store.nodes["stack.web"].status, "success")
+                self.assertEqual(bridge.store.nodes["stack.web.ping"].status, "idle")
+            finally:
+                bridge.close()
 
     def test_bridge_runs_a_command_while_the_container_stays_up(self):
         with tempfile.TemporaryDirectory() as directory:

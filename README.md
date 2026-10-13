@@ -258,7 +258,37 @@ python app.py a.b.api.health
 
 `command=("nginx", "-g", "daemon off;")` replaces the default `sleep infinity` when the image itself is the service. A nested router such as `c` is only another path segment.
 
+A Compose file is the same kind of node, one level up. Each service in the file is a child. Commands and HTTP routes are added onto a service by name. Mount the project with a prefix; that prefix is what starts the stack. A `.yml` file needs PyYAML. A `.json` Compose file does not.
+
+```python
+from pyouter.docker import Command, Compose, Service
+from pyouter.router import Router
+
+stack = Compose(
+    "compose.yaml",
+    project="demo",
+    routes=Router(
+        web=Router(ping=Command("echo", "web")),
+        api=Service("http://127.0.0.1:8080", health=("GET", "/health")),
+    ),
+)
+app.include(stack, prefix="stack")
+```
+
+```shell
+python app.py stack
+python app.py stack.web
+python app.py stack.web.ping
+python app.py stack.api.health
+```
+
+`python app.py stack` runs `docker compose up -d` and waits. `stack.web` is the `web` service from the file. `stack.web.ping` is `docker compose exec` inside that service. `stack.api.health` sends one request to the published address. Stopping the `stack` command runs `docker compose down` for the stack it started.
+
 ## What's new
+
+### 0.6.0
+
+* a Compose file flattens into a project node and one node per service
 
 ### 0.5.0
 
