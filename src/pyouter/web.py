@@ -12,16 +12,15 @@ import os
 import sys
 import threading
 import time
-import traceback
 import webbrowser
 from dataclasses import dataclass, field
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from pyouter.context import Context, Hooks
 from pyouter.errors import NotFound, NotInit
-from pyouter.executor import LeafExecutor
-from pyouter.router import Router
+from pyouter.router import Router, execute, walk
 from pyouter.web_page import render_page
 
 current_log_path = contextvars.ContextVar("pyouter_web_log_path", default=None)
@@ -91,14 +90,6 @@ def build_tree(router):
         }
 
     return build(router, "(root)", "")
-
-
-def walk(node, path):
-    yield path, node
-    if isinstance(node, Router):
-        for key, child in node.route.items():
-            child_path = f"{path}.{key}" if path else key
-            yield from walk(child, child_path)
 
 
 @dataclass
@@ -357,8 +348,10 @@ class WebBridge:
         self.httpd = None
         self.http_thread = None
         self.tasks = {}
+        self.contexts = {}
         self.cancel_requested = set()
         self.tasks_lock = threading.Lock()
+        self.hooks = self._make_hooks()
         self._stdout = None
         self._stderr = None
         self._capture_on = False
@@ -386,16 +379,56 @@ class WebBridge:
         raw = "" if path is None else str(path).strip()
         if raw in ("", ".", "/"):
             return self.router, ""
-        parts = raw.split(".")
-        if any(part == "" for part in parts):
-            raise NotFound({}, raw)
-        node = self.router
-        for part in parts:
-            if not isinstance(node, Router) or part not in node.route:
-                route = node.route if isinstance(node, Router) else {}
-                raise NotFound(route, part)
-            node = node.route[part]
-        return node, raw
+        node, norm, _hops = self.router.resolve(raw)
+        return node, norm
+
+    def _make_hooks(self):
+        hooks = Hooks()
+        hooks.before.append(self._on_before)
+        hooks.after.append(self._on_after)
+        return hooks
+
+    def _on_before(self, event):
+        if event["role"] not in ("fanout", "action"):
+            return
+        path = event["path"]
+        event["token"] = current_log_path.set(path)
+        self.store.mark_running(path)
+        node = event["node"]
+        if event["role"] == "fanout":
+            count = len(node.route) if isinstance(node, Router) else 0
+            self.store.log(path, "meta", f"开始执行路由，共 {count} 个子节点")
+        else:
+            info = describe(node)
+            self.store.log(path, "meta", f"开始执行 {info['target']}")
+
+    def _on_after(self, event):
+        if event["role"] not in ("fanout", "action"):
+            return
+        path = event["path"]
+        result = event["result"]
+        self.store.flush_path(path)
+        if result is None:
+            status = "error"
+            error = "missing result"
+        else:
+            status = result.status
+            error = None if status == "success" else result.error
+        if status == "error":
+            if event["role"] == "fanout":
+                self.store.log(path, "stderr", "" if error is None else str(error))
+            else:
+                text = event.get("traceback") or ("" if error is None else str(error))
+                self.store.log(path, "stderr", text)
+            self.store.mark_done(path, "error", None if error is None else str(error))
+        elif status == "cancelled":
+            self.store.mark_done(path, "cancelled", None)
+        else:
+            self.store.mark_done(path, status if status in ("success", "error", "cancelled") else "success", error)
+        token = event.get("token")
+        if token is not None:
+            current_log_path.reset(token)
+            event["token"] = None
 
     def snapshot(self):
         return {
@@ -434,10 +467,13 @@ class WebBridge:
         with self.tasks_lock:
             active = self.store.is_active(owner) or self.store.is_active(norm)
             task = self.tasks.get(owner)
+            ctx = self.contexts.get(owner)
             if task is None and not active:
                 return 409, {"ok": False, "error": "没有正在执行的任务"}
             if task is None:
                 self.cancel_requested.add(owner)
+        if ctx is not None:
+            ctx.cancel()
         if task is not None:
             self.loop.call_soon_threadsafe(task.cancel)
         return 202, {"ok": True, "path": owner}
@@ -461,8 +497,13 @@ class WebBridge:
         if cancelled:
             self.store.cancel_unfinished(path)
             raise asyncio.CancelledError()
+        ctx = Context(self.config, self.options, self.executor, self.hooks)
+        with self.tasks_lock:
+            self.contexts[path] = ctx
         try:
-            await self._run_node(node, path)
+            result = await execute(node, path, 0, ctx)
+            if result.status == "error":
+                raise RuntimeError(result.error or "error")
         except asyncio.CancelledError:
             self.store.cancel_unfinished(path)
             raise
@@ -471,54 +512,7 @@ class WebBridge:
                 current = self.tasks.get(path)
                 if current is asyncio.current_task():
                     self.tasks.pop(path, None)
-
-    async def _run_node(self, node, path):
-        token = current_log_path.set(path)
-        self.store.mark_running(path)
-        tasks = []
-        try:
-            if isinstance(node, Router):
-                items = list(node.route.items())
-                self.store.log(path, "meta", f"开始执行路由，共 {len(items)} 个子节点")
-                for key, child in items:
-                    child_path = f"{path}.{key}" if path else key
-                    tasks.append(asyncio.create_task(self._run_node(child, child_path)))
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                errors = [item for item in results if isinstance(item, Exception)]
-                if errors:
-                    raise RuntimeError(_summarize(errors))
-                self.store.flush_path(path)
-                self.store.mark_done(path, "success", None)
-            else:
-                info = describe(node)
-                self.store.log(path, "meta", f"开始执行 {info['target']}")
-                executor = LeafExecutor(self.config, self.options, self.executor, node)
-                await executor.run()
-                self.store.flush_path(path)
-                self.store.mark_done(path, "success", None)
-        except asyncio.CancelledError:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            if tasks:
-                try:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                except asyncio.CancelledError:
-                    pass
-            self.store.flush_path(path)
-            self.store.mark_done(path, "cancelled", None)
-            raise
-        except Exception as exc:
-            self.store.flush_path(path)
-            if isinstance(node, Router):
-                self.store.log(path, "stderr", str(exc))
-            else:
-                self.store.log(path, "stderr", traceback.format_exc().rstrip())
-            self.store.mark_done(path, "error", str(exc))
-            raise
-        finally:
-            self.store.flush_path(path)
-            current_log_path.reset(token)
+                self.contexts.pop(path, None)
 
     def _on_done(self, owner, future):
         try:
@@ -565,6 +559,9 @@ class WebBridge:
         self._closed = True
         with self.tasks_lock:
             tasks = list(self.tasks.values())
+            contexts = list(self.contexts.values())
+        for ctx in contexts:
+            ctx.cancel()
         if self.loop is not None and self.loop.is_running():
             for task in tasks:
                 self.loop.call_soon_threadsafe(task.cancel)
@@ -592,14 +589,6 @@ class WebBridge:
 
     def page(self):
         return render_page({"focus": self.focus, "script": self.script})
-
-
-def _summarize(errors):
-    parts = [f"{type(exc).__name__}: {exc}" for exc in errors[:6]]
-    extra = len(errors) - len(parts)
-    if extra > 0:
-        parts.append(f"另外 {extra} 个错误")
-    return "；".join(parts)
 
 
 class Handler(BaseHTTPRequestHandler):
