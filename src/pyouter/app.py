@@ -180,6 +180,8 @@ def _view_hook(options):
             label = "router2"
         elif role == "serve":
             label = "service"
+        elif role == "container":
+            label = "container"
         elif role == "group":
             label = "web"
         elif role == "action":
@@ -192,7 +194,7 @@ def _view_hook(options):
 
 
 def _cli_error_hook(event):
-    if event.get("role") not in ("action", "serve"):
+    if event.get("role") not in ("action", "serve", "container"):
         return
     traceback_text = event.get("traceback")
     if traceback_text:

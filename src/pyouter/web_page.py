@@ -387,7 +387,7 @@ PAGE = r"""<!DOCTYPE html>
 <script>
 const BOOT = /*__BOOT__*/null || {};
 const STATUS_LABEL = {idle: "空闲", pending: "等待", running: "运行中", success: "成功", error: "失败", cancelled: "已取消"};
-const KIND_LABEL = {router: "路由", function: "函数", object: "对象", web: "接口"};
+const KIND_LABEL = {router: "路由", function: "函数", object: "对象", web: "接口", docker: "命令"};
 function httpLabel(node) {
   if (!node || node.kind !== "web" || !node.rule) return "";
   return ((node.method || "") + " " + node.rule).trim();
@@ -397,12 +397,15 @@ function kindText(node) {
   const http = httpLabel(node);
   if (http) return http;
   if (node.route_type === "web" && node.kind === "router") return "服务";
+  if (node.route_type === "docker" && node.kind === "router") return "容器";
   return KIND_LABEL[node.kind] || node.kind || "";
 }
 function kindName(node) {
   if (!node) return "";
   if (node.kind === "web") return KIND_LABEL.web;
+  if (node.kind === "docker") return KIND_LABEL.docker;
   if (node.route_type === "web" && node.kind === "router") return "服务";
+  if (node.route_type === "docker" && node.kind === "router") return "容器";
   return KIND_LABEL[node.kind] || node.kind || "";
 }
 const state = {tree: null, nodes: {}, selected: "", seq: 0, filter: "", expanded: new Set(), script: BOOT.script || "pyouter"};

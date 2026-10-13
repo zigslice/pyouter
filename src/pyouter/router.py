@@ -222,6 +222,8 @@ class Router(object):
                 value._print_subtree(next_prefix, is_last_item)
             elif getattr(value, "kind", None) == "web":
                 print(f"{prefix}{connector}{key} ({value.method} {value.rule})")
+            elif getattr(value, "kind", None) == "docker":
+                print(f"{prefix}{connector}{key} ({' '.join(value.argv)})")
             else:
                 # 叶子节点
                 func_name = value.__name__ if hasattr(value, '__name__') else type(value).__name__
@@ -233,14 +235,19 @@ def node_kind(node):
 
     ``cli`` is a command function or an object with ``run``. ``router`` is a
     router written in Python. ``web`` is a Flask or FastAPI endpoint, or a
-    router produced by flattening one of those applications.
+    router produced by flattening one of those applications. ``docker`` is a
+    container, or a command that runs inside one.
     """
     if isinstance(node, Router):
+        if getattr(node, "origin", None) == "docker":
+            return "docker"
         if getattr(node, "origin", None) == "web":
             return "web"
         return "router"
     if getattr(node, "kind", None) == "web":
         return "web"
+    if getattr(node, "kind", None) == "docker":
+        return "docker"
     return "cli"
 
 
@@ -276,10 +283,13 @@ async def execute(node, path, depth, ctx):
     Router children run together unless that router's policy is ``sequence``.
     Child failures are recorded and do not stop the remaining children.
     A web service node starts the server and leaves it listening. A route
-    group inside that service does not call its endpoints. Cancellation
-    still stops the node and is re-raised.
+    group inside that service does not call its endpoints. A container node
+    starts that container and leaves it running. Cancellation still stops
+    the node and is re-raised.
     """
     if isinstance(node, Router):
+        if getattr(node, "origin", None) == "docker":
+            return await _execute_container(node, path, depth, ctx)
         if getattr(node, "serves", False):
             return await _execute_service(node, path, depth, ctx)
         if getattr(node, "origin", None) == "web":
@@ -295,6 +305,30 @@ async def _execute_service(node, path, depth, ctx):
     await ctx.hooks.emit("before", event)
     try:
         value = await serve_service(node, ctx)
+    except asyncio.CancelledError:
+        event["result"] = NodeResult(path, "cancelled")
+        await ctx.hooks.emit("after", event)
+        raise
+    except Exception as exc:
+        result = NodeResult(path, "error", error=str(exc), exc_type=type(exc).__name__)
+        event["result"] = result
+        event["traceback"] = traceback.format_exc().rstrip()
+        await ctx.hooks.emit("on_error", event)
+        await ctx.hooks.emit("after", event)
+        return result
+    result = NodeResult(path, "success", value=value)
+    event["result"] = result
+    await ctx.hooks.emit("after", event)
+    return result
+
+
+async def _execute_container(node, path, depth, ctx):
+    from .docker import start_container
+
+    event = _event(node, path, depth, "container")
+    await ctx.hooks.emit("before", event)
+    try:
+        value = await start_container(node, ctx)
     except asyncio.CancelledError:
         event["result"] = NodeResult(path, "cancelled")
         await ctx.hooks.emit("after", event)
