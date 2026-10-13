@@ -70,6 +70,8 @@ class Router(object):
         ``host`` and ``port`` are the address of that service.
         """
         router = _as_router(router, host=host, port=port)
+        if getattr(router, "origin", None) == "compose" and not prefix:
+            raise ValueError("include a compose project with a prefix")
         if getattr(router, "serves", False) and not prefix:
             if self.route:
                 raise ValueError("include a web service with a prefix")
@@ -234,11 +236,16 @@ def node_kind(node):
     """Classify a route node.
 
     ``cli`` is a command function or an object with ``run``. ``router`` is a
-    router written in Python. ``web`` is a Flask or FastAPI endpoint, or a
+    router written in Python.     ``web`` is a Flask or FastAPI endpoint, or a
     router produced by flattening one of those applications. ``docker`` is a
-    container, or a command that runs inside one.
+    container, a Compose service, or a command that runs inside one.
+    ``compose`` is a Compose project.
     """
     if isinstance(node, Router):
+        if getattr(node, "origin", None) == "compose":
+            return "compose"
+        if getattr(node, "origin", None) == "compose-service":
+            return "docker"
         if getattr(node, "origin", None) == "docker":
             return "docker"
         if getattr(node, "origin", None) == "web":
@@ -283,11 +290,16 @@ async def execute(node, path, depth, ctx):
     Router children run together unless that router's policy is ``sequence``.
     Child failures are recorded and do not stop the remaining children.
     A web service node starts the server and leaves it listening. A route
-    group inside that service does not call its endpoints. A container node
-    starts that container and leaves it running. Cancellation still stops
-    the node and is re-raised.
+    group inside that service does not call its endpoints.     A container node
+    starts that container and leaves it running. A Compose project starts
+    the stack and leaves it running. Cancellation still stops the node and
+    is re-raised.
     """
     if isinstance(node, Router):
+        if getattr(node, "origin", None) == "compose":
+            return await _execute_compose(node, path, depth, ctx)
+        if getattr(node, "origin", None) == "compose-service":
+            return await _execute_compose_service(node, path, depth, ctx)
         if getattr(node, "origin", None) == "docker":
             return await _execute_container(node, path, depth, ctx)
         if getattr(node, "serves", False):
@@ -329,6 +341,65 @@ async def _execute_container(node, path, depth, ctx):
     await ctx.hooks.emit("before", event)
     try:
         value = await start_container(node, ctx)
+    except asyncio.CancelledError:
+        event["result"] = NodeResult(path, "cancelled")
+        await ctx.hooks.emit("after", event)
+        raise
+    except Exception as exc:
+        result = NodeResult(path, "error", error=str(exc), exc_type=type(exc).__name__)
+        event["result"] = result
+        event["traceback"] = traceback.format_exc().rstrip()
+        await ctx.hooks.emit("on_error", event)
+        await ctx.hooks.emit("after", event)
+        return result
+    result = NodeResult(path, "success", value=value)
+    event["result"] = result
+    await ctx.hooks.emit("after", event)
+    return result
+
+
+async def _execute_compose(node, path, depth, ctx):
+    from .docker import start_compose
+
+    event = _event(node, path, depth, "compose")
+    await ctx.hooks.emit("before", event)
+    try:
+        value = await start_compose(node, ctx)
+    except asyncio.CancelledError:
+        event["result"] = NodeResult(path, "cancelled")
+        await ctx.hooks.emit("after", event)
+        raise
+    except Exception as exc:
+        result = NodeResult(path, "error", error=str(exc), exc_type=type(exc).__name__)
+        event["result"] = result
+        event["traceback"] = traceback.format_exc().rstrip()
+        await ctx.hooks.emit("on_error", event)
+        await ctx.hooks.emit("after", event)
+        return result
+    result = NodeResult(path, "success", value=value)
+    event["result"] = result
+    await ctx.hooks.emit("after", event)
+    return result
+
+
+async def _execute_compose_service(node, path, depth, ctx):
+    """One service in a Compose project. Running it does not call its commands."""
+    from .docker import project_running
+
+    event = _event(node, path, depth, "service")
+    await ctx.hooks.emit("before", event)
+    try:
+        if not await asyncio.to_thread(project_running, node.project):
+            raise RuntimeError(
+                f"compose project {node.project.project_name} is not running; "
+                "start it by running the compose node"
+            )
+        ports = " ".join(node.ports)
+        text = f"compose service {node.service_name}"
+        if ports:
+            text = f"{text} {ports}"
+        print(text)
+        value = {"service": node.service_name, "ports": list(node.ports), "image": node.image}
     except asyncio.CancelledError:
         event["result"] = NodeResult(path, "cancelled")
         await ctx.hooks.emit("after", event)

@@ -40,7 +40,10 @@ class App(object):
         A Flask or FastAPI application is flattened into routes first.
         ``host`` and ``port`` are where that service listens.
         """
-        self.router = _as_router(router, host=host, port=port)
+        router = _as_router(router, host=host, port=port)
+        if getattr(router, "origin", None) == "compose":
+            raise ValueError("include a compose project with a prefix")
+        self.router = router
         return self
 
     def include(self, router: Router, prefix=None, host=None, port=None):
@@ -52,6 +55,8 @@ class App(object):
         are where that service listens.
         """
         router = _as_router(router, host=host, port=port)
+        if getattr(router, "origin", None) == "compose" and not prefix:
+            raise ValueError("include a compose project with a prefix")
         if not hasattr(self, "router") or self.router is None:
             if prefix:
                 self.router = Router()
@@ -182,6 +187,10 @@ def _view_hook(options):
             label = "service"
         elif role == "container":
             label = "container"
+        elif role == "compose":
+            label = "compose"
+        elif role == "service":
+            label = "service"
         elif role == "group":
             label = "web"
         elif role == "action":
@@ -194,7 +203,7 @@ def _view_hook(options):
 
 
 def _cli_error_hook(event):
-    if event.get("role") not in ("action", "serve", "container"):
+    if event.get("role") not in ("action", "serve", "container", "compose", "service"):
         return
     traceback_text = event.get("traceback")
     if traceback_text:
