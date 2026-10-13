@@ -1,19 +1,26 @@
 """The runtime that stays up on a physical node.
 
-A node listens before any orchestration arrives. The control process
-pushes one layer of the tree to that listener. The runtime starts the
-layer's pool and then accepts calls for it. Pushing a new slice replaces
-the pool that was serving.
+The runtime is this package. ``deploy_tree`` installs it on first contact,
+then pushes one layer. A listener that already answers ``/health`` is left
+running. A loopback ``runtime`` is started on this machine. An SSH host, or
+a layer reached through one, receives the package at ``~/.pyouter/runtime``
+and the listener is started there. Pushing a new slice replaces the pool
+that was serving.
 
 This is not a cluster scheduler. The tree already says which runtime
-receives which layer. The runtime only installs the slice it is given and
-starts serving.
+receives which layer.
 """
 
 import argparse
 import json
+import os
+import signal
+import subprocess
+import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from .balance import normalize_balancer, normalize_workers, start_pool
 from .layer import layers_of
@@ -136,10 +143,10 @@ class _Handler(BaseHTTPRequestHandler):
             threading.Thread(target=server.shutdown, daemon=True).start()
 
 
-def serve(port=0):
+def serve(port=0, host="127.0.0.1"):
     """Listen for a slice and serve it. Return the bound port."""
     global _httpd
-    server = ThreadingHTTPServer(("127.0.0.1", int(port)), _Handler)
+    server = ThreadingHTTPServer((host, int(port)), _Handler)
     _httpd = server
     bound = server.server_address[1]
     print(f"node {bound}", flush=True)
@@ -162,14 +169,34 @@ def push(url, layer):
     return _post(url, "/deploy", body)
 
 
+def ensure(node, router=None, path=None):
+    """Install the runtime named on ``node`` when nothing is listening yet."""
+    url = getattr(node, "runtime", None)
+    where = path or "layer"
+    if not isinstance(url, str) or url == "":
+        raise ValueError(f"{where} has no runtime")
+    if _listening(url):
+        return {"status": "present", "url": url}
+    kind, port = _install_plan(node, router, path)
+    if kind == "local":
+        return _start_local(node, url, port)
+    if kind == "ssh":
+        return _place_ssh(_ssh_transport(router, path, node), url, port)
+    raise RuntimeError(
+        f"{where} runtime at {url} is not listening, "
+        "and this layer has no ssh host to install it on"
+    )
+
+
 def deploy_tree(router):
-    """Push every layer to the runtime named on that layer."""
+    """Install each layer's runtime, then push that layer's slice."""
     sent = []
     for layer in layers_of(router):
         target = _at(router, layer.path)
         url = getattr(target, "runtime", None)
         if not isinstance(url, str) or url == "":
             raise ValueError(f"{layer.path} has no runtime")
+        ensure(target, router=router, path=layer.path)
         sent.append(push(url, layer))
     return sent
 
@@ -179,8 +206,8 @@ def call(url, payload, timeout=30):
     return _post(url, "/call", payload, timeout=timeout)
 
 
-def health(url):
-    return _post(url, "/health", None, timeout=5, method="GET")
+def health(url, timeout=5):
+    return _post(url, "/health", None, timeout=timeout, method="GET")
 
 
 def shutdown(url):
@@ -219,11 +246,191 @@ def _post(url, path, payload, timeout=30, method=None):
     return json.loads(raw.decode("utf-8"))
 
 
+_LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+
+
+def _install_plan(node, router, path):
+    host, port = _split_runtime(node.runtime)
+    if host in _LOOPBACK:
+        return "local", port
+    if _ssh_transport(router, path, node) is not None:
+        return "ssh", port
+    return "unreachable", port
+
+
+def _split_runtime(url):
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname
+    if parsed.scheme not in {"http", "https"} or not host or parsed.port is None:
+        raise ValueError(f"runtime must be an http url with a port, got {url!r}")
+    return host, int(parsed.port)
+
+
+def _ssh_transport(router, path, node):
+    found = None
+    if router is not None and path:
+        current = router
+        for part in path.split("."):
+            routes = getattr(current, "route", None)
+            if not isinstance(routes, dict) or part not in routes:
+                break
+            current = routes[part]
+            if getattr(current, "origin", None) == "ssh":
+                found = current
+    if found is not None:
+        return found
+    if getattr(node, "origin", None) == "ssh":
+        return node
+    return None
+
+
+def _listening(url):
+    try:
+        body = health(url, timeout=0.4)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return bool(body.get("ok"))
+
+
+def _wait_until(url, timeout=10):
+    deadline = time.monotonic() + timeout
+    last = ""
+    while time.monotonic() < deadline:
+        try:
+            return health(url, timeout=0.4)
+        except (OSError, RuntimeError, ValueError) as exc:
+            last = str(exc)
+            time.sleep(0.05)
+    raise RuntimeError(f"runtime at {url} did not start: {last}")
+
+
+def _start_local(node, url, port):
+    env = os.environ.copy()
+    root = str(Path(__file__).resolve().parents[1])
+    env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "pyouter.node", "--host", "127.0.0.1", "--port", str(port)],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    node._runtime_proc = proc
+    try:
+        _wait_until(url)
+    except Exception:
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.kill()
+        raise
+    if proc.poll() is not None:
+        raise RuntimeError(f"runtime at {url} exited {proc.returncode}")
+    return {"status": "installed", "url": url, "pid": proc.pid}
+
+
+def _place_ssh(node, url, port):
+    script = _installer_script(port)
+    args = ["-o", "BatchMode=yes"]
+    if getattr(node, "port", None) is not None:
+        args.extend(["-p", str(node.port)])
+    if getattr(node, "identity", None):
+        args.extend(["-i", node.identity, "-o", "IdentitiesOnly=yes"])
+    args.extend([node.destination, "python3", "-"])
+    try:
+        completed = subprocess.run(
+            [node.ssh, *args],
+            input=script.encode("utf-8"),
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"cannot run {node.ssh}") from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).decode("utf-8", "replace").strip()
+        message = f"install on {node.destination} failed"
+        if detail:
+            message = f"{message}: {detail}"
+        raise RuntimeError(message)
+    _wait_until(url)
+    return {"status": "installed", "url": url}
+
+
+def _installer_script(port):
+    blob = _package_b64()
+    return f"""
+import base64, io, os, sys, tarfile, time, urllib.request, subprocess
+from pathlib import Path
+PORT = {int(port)}
+BLOB = {blob!r}
+root = Path.home() / ".pyouter" / "runtime"
+root.mkdir(parents=True, exist_ok=True)
+with tarfile.open(fileobj=io.BytesIO(base64.b64decode(BLOB)), mode="r") as archive:
+    archive.extractall(root, filter="data")
+url = "http://127.0.0.1:%d/health" % PORT
+
+def up():
+    try:
+        with urllib.request.urlopen(url, timeout=0.5) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+if not up():
+    log = open(root / "node.log", "ab")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(root)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "pyouter.node", "--host", "0.0.0.0", "--port", str(PORT)],
+        env=env,
+        cwd=str(root),
+        stdout=log,
+        stderr=log,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    (root / "node.pid").write_text(str(proc.pid))
+    for _ in range(100):
+        if up():
+            break
+        if proc.poll() is not None:
+            sys.stderr.write((root / "node.log").read_text(errors="replace"))
+            raise SystemExit(1)
+        time.sleep(0.05)
+    else:
+        sys.stderr.write((root / "node.log").read_text(errors="replace"))
+        raise SystemExit("runtime did not listen")
+print("installed")
+"""
+
+
+def _package_b64():
+    import base64
+    import io
+    import tarfile
+
+    package = Path(__file__).resolve().parent
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as archive:
+        for path in sorted(package.rglob("*")):
+            if not path.is_file():
+                continue
+            if "__pycache__" in path.parts or path.suffix == ".pyc":
+                continue
+            archive.add(path, arcname=str(Path("pyouter") / path.relative_to(package)))
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
 def _main(argv):
     parser = argparse.ArgumentParser(prog="pyouter.node")
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7710)
     args = parser.parse_args(argv)
-    serve(args.port)
+    serve(args.port, host=args.host)
 
 
 if __name__ == "__main__":
