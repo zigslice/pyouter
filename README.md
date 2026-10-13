@@ -357,19 +357,52 @@ app.include(Router(cli=Router(box=edge)))
 | --- | --- | --- | --- |
 | container, SSH host, web service | `balancer` | `uvicorn` | which provider starts that layer's pool |
 | container, SSH host, web service | `workers` | `1` | how many processes that pool starts |
+| container, SSH host, web service | `runtime` |  | `http://host:port` of the listener that serves this layer |
 
 The provider is an internal detail of the pool. You set `balancer` and `workers`. Replacing the provider is `register_provider(name, start)` and passing that name as `balancer`.
 
-One measured run, 4 concurrent calls, each occupying its process for 0.3s:
+## deploy
+
+The runtime is the pyouter package. `deploy_tree` installs that package on the machine named by `runtime`, then pushes the layer. A listener that already answers `/health` is left in place. A later push replaces the pool.
+
+| where the layer runs | how the package gets there |
+| --- | --- |
+| `runtime` is on this machine (`127.0.0.1`) | `deploy_tree` starts `python -m pyouter.node` here |
+| an SSH host, or a layer reached through one | the first contact copies the package to `~/.pyouter/runtime` over that host's `ssh` and starts the listener |
+| a container started from this machine | starting the container mounts the package; no Dockerfile is written |
+
+```python
+edge = Container("python:3.12-slim", routes=..., workers=2, runtime="http://127.0.0.1:7710")
+jump = SSH("10.0.0.9", routes=..., workers=2, runtime="http://10.0.0.9:7710")
+api = flatten(service, workers=4, runtime="http://10.0.0.9:7711")
+```
+
+`deploy_tree(app.router)` is the control call. A layer with no `runtime` is not deployed. A remote address that is not an SSH host, and is not reached through one, is refused: there is no path to copy the package there.
+
+| | pyouter | Kubernetes |
+| --- | --- | --- |
+| what is placed | one layer of the tree | a pod |
+| who chooses the machine | the `runtime` written on that layer | the scheduler |
+| what is already on the machine | a way to reach it: this process, or `ssh` | a kubelet reconciling pod specs |
+| what starts the work | the installed runtime starts that layer's pool | the kubelet starts containers from images |
+| what a second push does | replaces the pool serving that slice | reconciles toward the new spec |
+
+One measured run after a slice was pushed to a node runtime. Four concurrent calls each occupy a process for 0.3s:
 
 | workers | calls | hold | elapsed | processes used | speedup |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 4 | 0.3s | 1.206s | 1 | 1 |
-| 4 | 4 | 0.3s | 0.304s | 4 | 3.97 |
+| 1 | 4 | 0.3s | 1.205s | 1 | 1 |
+| 4 | 4 | 0.3s | 0.305s | 4 | 3.95 |
 
 Four processes finish the same concurrent work in about a quarter of the time. One process runs the calls one after another. The test requires the larger pool to be at least 1.5 times faster.
 
 ## What's new
+
+### 0.9.0
+
+* a node runtime stays up on a physical node and receives the layer pushed to it
+* `deploy_tree` installs the runtime on first contact, then starts that layer's pool
+* a loopback runtime is started here; an SSH host receives the package over `ssh`
 
 ### 0.8.0
 

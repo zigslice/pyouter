@@ -104,7 +104,7 @@ class Container(Router):
     ``docker`` is the docker executable, so tests can substitute a fake.
     """
 
-    def __init__(self, image, routes=None, name=None, command=None, ports=None, docker="docker", workers=1, balancer="uvicorn"):
+    def __init__(self, image, routes=None, name=None, command=None, ports=None, docker="docker", workers=1, balancer="uvicorn", runtime=None):
         super().__init__()
         if not isinstance(image, str) or image == "" or image.startswith("-"):
             raise ValueError("container image must be a non-empty name")
@@ -119,6 +119,7 @@ class Container(Router):
         self.docker = docker
         self.balancer = normalize_balancer(balancer)
         self.workers = normalize_workers(workers)
+        self.runtime = runtime
         self.inner_port = None
         self.inside_path = None
         self._owns = False
