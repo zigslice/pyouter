@@ -218,7 +218,51 @@ A path parameter is taken from an option of the same name, from `options.params`
 
 `app.include(service, prefix="api", port=5000)` selects the address. `flatten(service, port=5000)` returns the same router when you want to mount it yourself. A FastAPI application listens on `127.0.0.1:8000` unless you pass a port, and starting it needs `uvicorn`. `GET /users/{user_id}` becomes `users.user_id`.
 
+## containers
+
+A container is a node too. Commands and HTTP services inside it are child nodes, so a path such as `a.b.c.d` reaches through the container `b` into `c` and then `d`. Docker is not required to install pyouter. The `docker` executable is used only when a container node runs.
+
+```python
+from pyouter.app import App
+from pyouter.docker import Command, Container, Service
+from pyouter.router import Router
+
+box = Container(
+    "alpine:3",
+    name="tools",
+    ports=("8080:80",),
+    routes=Router(
+        c=Router(
+            d=Command("echo", "deep"),
+        ),
+        api=Service(
+            "http://127.0.0.1:8080",
+            health=("GET", "/health"),
+        ),
+    ),
+)
+
+app = App(config={})
+app.include(Router(a=Router(b=box)))
+app.run()
+```
+
+```shell
+python app.py
+python app.py a.b
+python app.py a.b.c.d
+python app.py a.b.api.health
+```
+
+`python app.py a.b` starts the container and waits. `a.b.c.d` is `docker exec tools echo deep` in that container, then the command exits. `a.b.api.health` sends `GET /health` to the published address. Both fail, and say to start the container, when `a.b` is not running. Running `a.b` again while it is running reports that and leaves the container in place. Stopping the `a.b` command removes the container it started. The pyouter process keeps running.
+
+`command=("nginx", "-g", "daemon off;")` replaces the default `sleep infinity` when the image itself is the service. A nested router such as `c` is only another path segment.
+
 ## What's new
+
+### 0.5.0
+
+* a container is a node; commands and published HTTP routes under it are child nodes
 
 ### 0.4.0
 

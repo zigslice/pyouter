@@ -32,6 +32,11 @@ def _console(message):
     stream.flush()
 
 
+def _holds(node):
+    """A node that stays up while its children are invoked."""
+    return getattr(node, "serves", False) or getattr(node, "origin", None) == "docker"
+
+
 def _under(parent, child):
     if parent == child:
         return False
@@ -51,13 +56,24 @@ def _overlaps(left, right):
 def describe(node):
     if isinstance(node, Router):
         target = "Router"
-        if getattr(node, "origin", None) == "web":
+        if getattr(node, "origin", None) == "docker":
+            target = getattr(node, "image", None) or "docker"
+        elif getattr(node, "origin", None) == "web":
             address = getattr(node, "address", None)
-            if getattr(node, "serves", False) and address is not None:
+            if address is not None:
                 target = address.base_url
             else:
                 target = getattr(node, "framework", None) or "web"
         return {"kind": "router", "target": target, "signature": "", "doc": ""}
+
+    if getattr(node, "kind", None) == "docker":
+        argv = " ".join(getattr(node, "argv", ()) or ())
+        return {
+            "kind": "docker",
+            "target": argv,
+            "signature": "",
+            "doc": inspect.getdoc(node) or "",
+        }
 
     if getattr(node, "kind", None) == "web":
         endpoint = getattr(node, "endpoint", None)
@@ -419,12 +435,13 @@ class WebBridge:
         self._capture_on = False
 
     def _live_service_paths(self):
-        return [path for path, node in walk(self.router, "") if getattr(node, "serves", False)]
+        return [path for path, node in walk(self.router, "") if _holds(node)]
 
     def _reserved_paths(self, node, norm):
-        # Starting a web service, or naming one of its route groups, must not
-        # mark every endpoint busy. Those endpoints are requests to the service.
-        if getattr(node, "serves", False) or getattr(node, "origin", None) == "web":
+        # Starting a web service or a container, or naming one of its route
+        # groups, must not mark every child busy. Those children are calls
+        # into the process that is already running.
+        if _holds(node) or getattr(node, "origin", None) == "web":
             return [norm]
         return [item_path for item_path, _node in walk(node, norm)]
 
@@ -442,7 +459,7 @@ class WebBridge:
         return hooks
 
     def _on_before(self, event):
-        if event["role"] not in ("fanout", "action", "serve", "group"):
+        if event["role"] not in ("fanout", "action", "serve", "group", "container"):
             return
         path = event["path"]
         event["token"] = current_log_path.set(path)
@@ -451,6 +468,9 @@ class WebBridge:
         if event["role"] == "serve":
             url = node.address.base_url if getattr(node, "address", None) else ""
             self.store.log(path, "meta", f"启动 web 服务 {url}")
+        elif event["role"] == "container":
+            name = getattr(node, "container_name", "") or ""
+            self.store.log(path, "meta", f"启动容器 {name}")
         elif event["role"] == "group":
             url = node.address.base_url if getattr(node, "address", None) else ""
             self.store.log(path, "meta", f"路由分组 {url}")
@@ -462,7 +482,7 @@ class WebBridge:
             self.store.log(path, "meta", f"开始执行 {info['target']}")
 
     def _on_after(self, event):
-        if event["role"] not in ("fanout", "action", "serve", "group"):
+        if event["role"] not in ("fanout", "action", "serve", "group", "container"):
             return
         path = event["path"]
         result = event["result"]
