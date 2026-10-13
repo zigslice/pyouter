@@ -34,7 +34,7 @@ def _console(message):
 
 def _holds(node):
     """A node that stays up while its children are invoked."""
-    return getattr(node, "serves", False) or getattr(node, "origin", None) in {"docker", "compose"}
+    return getattr(node, "serves", False) or getattr(node, "origin", None) in {"docker", "compose", "ssh"}
 
 
 def _under(parent, child):
@@ -60,6 +60,8 @@ def describe(node):
             target = getattr(node, "image", None) or "docker"
         elif getattr(node, "origin", None) == "compose":
             target = getattr(node, "project_name", None) or "compose"
+        elif getattr(node, "origin", None) == "ssh":
+            target = getattr(node, "destination", None) or "ssh"
         elif getattr(node, "origin", None) == "compose-service":
             image = getattr(node, "image", "") or ""
             ports = " ".join(getattr(node, "ports", ()) or ())
@@ -72,10 +74,10 @@ def describe(node):
                 target = getattr(node, "framework", None) or "web"
         return {"kind": "router", "target": target, "signature": "", "doc": ""}
 
-    if getattr(node, "kind", None) == "docker":
+    if getattr(node, "kind", None) in {"docker", "ssh"}:
         argv = " ".join(getattr(node, "argv", ()) or ())
         return {
-            "kind": "docker",
+            "kind": node.kind,
             "target": argv,
             "signature": "",
             "doc": inspect.getdoc(node) or "",
@@ -466,7 +468,7 @@ class WebBridge:
         return hooks
 
     def _on_before(self, event):
-        if event["role"] not in ("fanout", "action", "serve", "group", "container", "compose", "service"):
+        if event["role"] not in ("fanout", "action", "serve", "group", "container", "compose", "service", "ssh"):
             return
         path = event["path"]
         event["token"] = current_log_path.set(path)
@@ -484,6 +486,9 @@ class WebBridge:
         elif event["role"] == "service":
             name = getattr(node, "service_name", "") or ""
             self.store.log(path, "meta", f"编排服务 {name}")
+        elif event["role"] == "ssh":
+            name = getattr(node, "destination", "") or ""
+            self.store.log(path, "meta", f"连接 {name}")
         elif event["role"] == "group":
             url = node.address.base_url if getattr(node, "address", None) else ""
             self.store.log(path, "meta", f"路由分组 {url}")
@@ -495,7 +500,7 @@ class WebBridge:
             self.store.log(path, "meta", f"开始执行 {info['target']}")
 
     def _on_after(self, event):
-        if event["role"] not in ("fanout", "action", "serve", "group", "container", "compose", "service"):
+        if event["role"] not in ("fanout", "action", "serve", "group", "container", "compose", "service", "ssh"):
             return
         path = event["path"]
         result = event["result"]

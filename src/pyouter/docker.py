@@ -217,9 +217,12 @@ def exec_command(node):
 
 
 def host_running(node):
-    """Return whether the container or Compose project for ``node`` is up."""
+    """Return whether the container, Compose project, or SSH host for ``node`` is up."""
     if isinstance(node, ComposeService):
         return project_running(node.project)
+    if getattr(node, "origin", None) == "ssh":
+        from .ssh import ssh_connected
+        return ssh_connected(node)
     return container_running(node)
 
 
@@ -229,6 +232,9 @@ def host_down_message(node):
             f"compose project {node.project.project_name} is not running; "
             "start it by running the compose node"
         )
+    if getattr(node, "origin", None) == "ssh":
+        from .ssh import down_message
+        return down_message(node)
     return (
         f"container {node.container_name} is not running; "
         "start it by running the container node"
