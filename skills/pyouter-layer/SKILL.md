@@ -9,7 +9,7 @@ description: >-
 
 # Layers
 
-Read `skills/pyouter/SKILL.md` first. Source: `src/pyouter/layer.py`, `src/pyouter/balance.py`.
+Open this only after a container, SSH host, or web service from `skills/pyouter-help/SKILL.md` needs more than one worker. Do not set `workers` on the first leaf. Source: `src/pyouter/layer.py`, `src/pyouter/balance.py`. Rules: `skills/pyouter/SKILL.md`.
 
 Four nodes start their own pool. Crossing one is a new layer.
 
