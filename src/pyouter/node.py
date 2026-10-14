@@ -199,12 +199,18 @@ class _Handler(BaseHTTPRequestHandler):
             threading.Thread(target=server.shutdown, daemon=True).start()
 
 
-def serve(port=0, host="127.0.0.1", identity=None, sn=(), sn_listen=None):
+def serve(port=0, host="127.0.0.1", identity=None, sn=(), sn_listen=None, net=None):
     """Listen for a slice and serve it. Return the bound port.
 
     ``sn`` is the list of super-node multiaddrs this runtime joins.
     ``sn_listen`` is ``(host, port)`` when this runtime is itself a super node.
+    ``net`` is the shared secret. Joining or serving a super-node network
+    without it is refused.
     """
+    from .peer import network_secret
+
+    if (sn or sn_listen is not None) and not network_secret(net):
+        raise RuntimeError("this network needs --net")
     global _httpd, _node_peer
     server = ThreadingHTTPServer((host, int(port)), _Handler)
     _httpd = server
@@ -228,6 +234,7 @@ def serve(port=0, host="127.0.0.1", identity=None, sn=(), sn_listen=None):
             sn=list(sn),
             sn_listen=sn_listen,
             handler=_node_handler,
+            net=net,
         ).start()
         _node_peer = peer
         print(f"peer {peer.peer_id}", flush=True)
@@ -324,14 +331,15 @@ def ensure(node, router=None, path=None):
     )
 
 
-def deploy_tree(router, sn=None):
+def deploy_tree(router, sn=None, net=None):
     """Install each layer's runtime, then push that layer's slice.
 
-    ``sn`` is the control process's super-node list. A layer whose
-    ``runtime`` is a peer id is reached through that list. The list is not
-    stored on the layer. A cluster layer builds one image, applies one
-    pod, and pushes to that pod's peer. A layer under it with no
-    ``runtime`` is pushed to the same peer.
+    ``sn`` is the control process's super-node list. ``net`` is the shared
+    secret for that network. A layer whose ``runtime`` is a peer id is
+    reached through that list, and only a peer started with the same secret
+    accepts the slice. Neither value is stored on the layer. A cluster
+    layer builds one image, applies one pod, and pushes to that pod's peer.
+    A layer under it with no ``runtime`` is pushed to the same peer.
     """
     from .cluster import enclosing_cluster, publish
     from .peer import is_peer_id, push_peer
@@ -341,7 +349,7 @@ def deploy_tree(router, sn=None):
     for layer in layers_of(router):
         target = _at(router, layer.path)
         if layer.kind == "cluster":
-            sent.append(publish(target, layer.path, sn))
+            sent.append(publish(target, layer.path, sn, net))
             peers[layer.path] = target.runtime
             continue
         url = getattr(target, "runtime", None)
@@ -349,10 +357,10 @@ def deploy_tree(router, sn=None):
             owner = enclosing_cluster(router, layer.path)
             if owner is None or owner not in peers:
                 raise ValueError(f"{layer.path} has no runtime")
-            sent.append(push_peer(peers[owner], layer, sn))
+            sent.append(push_peer(peers[owner], layer, sn, net))
             continue
         if is_peer_id(url):
-            sent.append(push_peer(url, layer, sn))
+            sent.append(push_peer(url, layer, sn, net))
             continue
         ensure(target, router=router, path=layer.path)
         sent.append(push(url, layer))
@@ -590,14 +598,22 @@ def _main(argv):
     parser.add_argument("--identity", default=None)
     parser.add_argument("--sn", action="append", default=[])
     parser.add_argument("--sn-listen", default=None)
+    parser.add_argument("--net", default=None)
     args = parser.parse_args(argv)
-    serve(
-        args.port,
-        host=args.host,
-        identity=args.identity,
-        sn=args.sn,
-        sn_listen=_sn_listen(args.sn_listen),
-    )
+    try:
+        serve(
+            args.port,
+            host=args.host,
+            identity=args.identity,
+            sn=args.sn,
+            sn_listen=_sn_listen(args.sn_listen),
+            net=args.net,
+        )
+    except RuntimeError as exc:
+        if str(exc) == "this network needs --net":
+            sys.stderr.write(str(exc) + "\n")
+            raise SystemExit(1) from exc
+        raise
 
 
 def _sn_listen(value):
