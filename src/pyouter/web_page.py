@@ -387,7 +387,7 @@ PAGE = r"""<!DOCTYPE html>
 <script>
 const BOOT = /*__BOOT__*/null || {};
 const STATUS_LABEL = {idle: "空闲", pending: "等待", running: "运行中", success: "成功", error: "失败", cancelled: "已取消"};
-const KIND_LABEL = {router: "路由", function: "函数", object: "对象", web: "接口", docker: "命令", compose: "编排", ssh: "远程"};
+const KIND_LABEL = {router: "路由", function: "函数", object: "对象", web: "接口", docker: "命令", compose: "编排", ssh: "远程", cluster: "集群"};
 function httpLabel(node) {
   if (!node || node.kind !== "web" || !node.rule) return "";
   return ((node.method || "") + " " + node.rule).trim();
@@ -400,6 +400,7 @@ function kindText(node) {
   if (node.route_type === "docker" && node.kind === "router") return "容器";
   if (node.route_type === "compose" && node.kind === "router") return "编排";
   if (node.route_type === "ssh" && node.kind === "router") return "主机";
+  if (node.route_type === "cluster" && node.kind === "router") return "集群";
   return KIND_LABEL[node.kind] || node.kind || "";
 }
 function kindName(node) {
@@ -411,6 +412,7 @@ function kindName(node) {
   if (node.route_type === "docker" && node.kind === "router") return "容器";
   if (node.route_type === "compose" && node.kind === "router") return "编排";
   if (node.route_type === "ssh" && node.kind === "router") return "主机";
+  if (node.route_type === "cluster" && node.kind === "router") return "集群";
   return KIND_LABEL[node.kind] || node.kind || "";
 }
 const state = {tree: null, nodes: {}, selected: "", seq: 0, filter: "", expanded: new Set(), script: BOOT.script || "pyouter"};

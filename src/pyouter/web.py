@@ -34,7 +34,7 @@ def _console(message):
 
 def _holds(node):
     """A node that stays up while its children are invoked."""
-    return getattr(node, "serves", False) or getattr(node, "origin", None) in {"docker", "compose", "ssh"}
+    return getattr(node, "serves", False) or getattr(node, "origin", None) in {"docker", "compose", "ssh", "cluster"}
 
 
 def _under(parent, child):
@@ -62,6 +62,8 @@ def describe(node):
             target = getattr(node, "project_name", None) or "compose"
         elif getattr(node, "origin", None) == "ssh":
             target = getattr(node, "destination", None) or "ssh"
+        elif getattr(node, "origin", None) == "cluster":
+            target = getattr(node, "image", None) or "cluster"
         elif getattr(node, "origin", None) == "compose-service":
             image = getattr(node, "image", "") or ""
             ports = " ".join(getattr(node, "ports", ()) or ())
@@ -468,7 +470,7 @@ class WebBridge:
         return hooks
 
     def _on_before(self, event):
-        if event["role"] not in ("fanout", "action", "serve", "group", "container", "compose", "service", "ssh"):
+        if event["role"] not in ("fanout", "action", "serve", "group", "container", "compose", "service", "ssh", "cluster"):
             return
         path = event["path"]
         event["token"] = current_log_path.set(path)
@@ -489,6 +491,9 @@ class WebBridge:
         elif event["role"] == "ssh":
             name = getattr(node, "destination", "") or ""
             self.store.log(path, "meta", f"连接 {name}")
+        elif event["role"] == "cluster":
+            name = getattr(node, "image", "") or ""
+            self.store.log(path, "meta", f"提交集群 {name}")
         elif event["role"] == "group":
             url = node.address.base_url if getattr(node, "address", None) else ""
             self.store.log(path, "meta", f"路由分组 {url}")
@@ -500,7 +505,7 @@ class WebBridge:
             self.store.log(path, "meta", f"开始执行 {info['target']}")
 
     def _on_after(self, event):
-        if event["role"] not in ("fanout", "action", "serve", "group", "container", "compose", "service", "ssh"):
+        if event["role"] not in ("fanout", "action", "serve", "group", "container", "compose", "service", "ssh", "cluster"):
             return
         path = event["path"]
         result = event["result"]

@@ -1,8 +1,8 @@
 """Flat segments of one route tree.
 
-A Docker container, a Compose project, an SSH host, or a web service is a
-boundary. The routers and commands written under it in Python are the next
-segment. Starting the boundary opens that segment; stopping it closes the
+A Docker container, a Compose project, an SSH host, a cluster pod, or a
+web service is a boundary. The routers and commands written under it in
+Python are the next segment. Starting the boundary opens that segment; stopping it closes the
 segment. Workers joined to a segment can run its leaves. The boundary node
 itself stays on the worker that claimed it.
 
@@ -326,7 +326,7 @@ def script_digest(script=None):
 def _boundary(node):
     if not isinstance(node, Router):
         return False
-    if getattr(node, "origin", None) in {"docker", "compose", "ssh"}:
+    if getattr(node, "origin", None) in {"docker", "compose", "ssh", "cluster"}:
         return True
     return bool(getattr(node, "serves", False))
 

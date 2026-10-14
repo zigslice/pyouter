@@ -1,9 +1,9 @@
 """Layers in a route tree.
 
 A layer is a place that starts its own load balancer. Crossing into a
-container, an SSH host, or a listening server enters a new layer. The
-node that opens the layer stays on one worker of the parent layer. Work
-under that node is balanced by the layer's own pool.
+container, an SSH host, a cluster pod, or a listening server enters a
+new layer. The node that opens the layer stays on one worker of the
+parent layer. Work under that node is balanced by the layer's own pool.
 
 ``cli > docker > ssh > docker > server`` is four crossings. Each crossing
 has its own balancer and its own worker count. The call that lands on a
@@ -12,7 +12,7 @@ inside it.
 """
 
 
-_KINDS = ("docker", "ssh", "server")
+_KINDS = ("docker", "ssh", "cluster", "server")
 
 
 class Layer:
@@ -56,7 +56,7 @@ class Plan:
 
 
 def layer_kind(node):
-    """Return ``docker``, ``ssh``, ``server``, or ``None``."""
+    """Return ``docker``, ``ssh``, ``cluster``, ``server``, or ``None``."""
     kind = getattr(node, "layer", None)
     if kind in _KINDS:
         return kind
@@ -65,6 +65,8 @@ def layer_kind(node):
         return "docker"
     if origin == "ssh":
         return "ssh"
+    if origin == "cluster":
+        return "cluster"
     if getattr(node, "serves", False):
         return "server"
     return None

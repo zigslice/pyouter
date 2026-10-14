@@ -29,55 +29,69 @@ from .layer import layers_of
 class _Service:
     def __init__(self):
         self.lock = threading.Lock()
-        self.pool = None
-        self.spec = None
+        self.pools = {}
+        self.specs = {}
 
     def deploy(self, spec):
         path = spec.get("path")
         kind = spec.get("kind")
         if not isinstance(path, str) or path == "":
             raise ValueError("deploy needs a path")
-        if kind not in {"docker", "ssh", "server"}:
+        if kind not in {"docker", "ssh", "cluster", "server"}:
             raise ValueError("deploy needs a layer kind")
         balancer = normalize_balancer(spec.get("balancer"))
         workers = normalize_workers(spec.get("workers"))
         pool = start_pool(provider=balancer, workers=workers)
         with self.lock:
-            previous = self.pool
-            self.pool = pool
-            self.spec = {
+            previous = self.pools.get(path)
+            self.pools[path] = pool
+            self.specs[path] = {
                 "path": path,
                 "kind": kind,
                 "balancer": balancer,
                 "workers": workers,
                 "port": pool.port,
             }
+            current = dict(self.specs[path])
         if previous is not None:
             previous.close()
-        return dict(self.spec)
+        return current
 
     def call(self, payload):
+        layer = payload.get("layer") if isinstance(payload, dict) else None
         with self.lock:
-            pool = self.pool
+            if layer and layer in self.pools:
+                pool = self.pools[layer]
+            elif len(self.pools) == 1:
+                pool = next(iter(self.pools.values()))
+            else:
+                pool = None
         if pool is None:
             raise RuntimeError("node has no deployment")
         return pool.call(payload)
 
     def health(self):
         with self.lock:
-            spec = dict(self.spec) if self.spec else None
-        if spec is None:
+            specs = [dict(self.specs[key]) for key in sorted(self.specs)]
+        if not specs:
             return {"ok": True, "deployed": False}
-        spec["ok"] = True
-        spec["deployed"] = True
-        return spec
+        if len(specs) == 1:
+            spec = specs[0]
+            spec["ok"] = True
+            spec["deployed"] = True
+            return spec
+        return {
+            "ok": True,
+            "deployed": True,
+            "slices": [{**item, "ok": True, "deployed": True} for item in specs],
+        }
 
     def close(self):
         with self.lock:
-            pool = self.pool
-            self.pool = None
-            self.spec = None
-        if pool is not None:
+            pools = list(self.pools.values())
+            self.pools = {}
+            self.specs = {}
+        for pool in pools:
             pool.close()
 
 
@@ -228,16 +242,28 @@ def deploy_tree(router, sn=None):
 
     ``sn`` is the control process's super-node list. A layer whose
     ``runtime`` is a peer id is reached through that list. The list is not
-    stored on the layer.
+    stored on the layer. A cluster layer builds one image, applies one
+    pod, and pushes to that pod's peer. A layer under it with no
+    ``runtime`` is pushed to the same peer.
     """
+    from .cluster import enclosing_cluster, publish
     from .peer import is_peer_id, push_peer
 
     sent = []
+    peers = {}
     for layer in layers_of(router):
         target = _at(router, layer.path)
+        if layer.kind == "cluster":
+            sent.append(publish(target, layer.path, sn))
+            peers[layer.path] = target.runtime
+            continue
         url = getattr(target, "runtime", None)
         if not isinstance(url, str) or url == "":
-            raise ValueError(f"{layer.path} has no runtime")
+            owner = enclosing_cluster(router, layer.path)
+            if owner is None or owner not in peers:
+                raise ValueError(f"{layer.path} has no runtime")
+            sent.append(push_peer(peers[owner], layer, sn))
+            continue
         if is_peer_id(url):
             sent.append(push_peer(url, layer, sn))
             continue

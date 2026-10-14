@@ -53,6 +53,11 @@ def super_nodes(sn=None):
     return [str(item).strip() for item in sn if str(item).strip()]
 
 
+def peer_health(peer_id, sn=None):
+    """Ask ``peer_id`` for its health through the super nodes in ``sn``."""
+    return _control_request(peer_id, {"op": "health"}, sn)
+
+
 def push_peer(peer_id, layer, sn=None):
     """Push one layer slice to the peer ``peer_id``."""
     body = {
@@ -242,18 +247,34 @@ class PeerNode:
 
     async def _request(self, peer_id, message):
         import trio
-        from libp2p.custom_types import TProtocol
         from libp2p.peer.id import ID
 
         target = ID.from_base58(peer_id)
-        await self._reach(target)
+        last = None
+        for _attempt in range(2):
+            try:
+                await self._reach(target)
+                return await self._exchange(target, message)
+            except Exception as exc:
+                last = exc
+                with trio.move_on_after(2):
+                    try:
+                        await self._host.disconnect(target)
+                    except Exception:
+                        pass
+        raise RuntimeError(f"peer {peer_id} did not answer: {last}")
+
+    async def _exchange(self, target, message):
+        import trio
+        from libp2p.custom_types import TProtocol
+
         with trio.fail_after(15):
             stream = await self._host.new_stream(target, [TProtocol(_PROTOCOL)])
             await _write_message(stream, message)
             reply = await _read_message(stream)
             await stream.close()
         if not isinstance(reply, dict):
-            raise RuntimeError(f"peer {peer_id} returned an empty reply")
+            raise RuntimeError(f"peer {target.to_base58()} returned an empty reply")
         if reply.get("error"):
             raise RuntimeError(str(reply["error"]))
         return reply
