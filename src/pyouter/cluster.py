@@ -77,48 +77,52 @@ class Cluster(Router):
             self.include(routes)
 
 
-def publish(node, path, sn=None):
+def publish(node, path, sn=None, net=None):
     """Start this layer's pod when it is down, then push its slice."""
     from .layer import Layer, balancer_name, worker_count
     from .peer import push_peer
 
-    peer = place(node, sn)
+    peer = place(node, sn, net)
     node.runtime = peer
     layer = Layer(path, "cluster", balancer_name(node), worker_count(node))
-    return push_peer(peer, layer, sn)
+    return push_peer(peer, layer, sn, net)
 
 
-def place(node, sn=None):
+def place(node, sn=None, net=None):
     """Build and apply this pod, then wait until its peer has joined.
 
     The same tree and a peer that is already up skips the build and the
     apply. A tree change builds the image again and rolls the Deployment.
     A peer that is down is applied again from the image already pushed.
     """
-    from .peer import peer_id_of, super_nodes
+    from .peer import network_secret, peer_id_of, super_nodes
 
     addresses = super_nodes(sn)
     if not addresses:
         raise RuntimeError(f"cluster {node.cluster_name} needs a super node")
+    secret_text = network_secret(net)
+    if not secret_text:
+        raise RuntimeError(f"cluster {node.cluster_name} needs a network secret")
     identity = _identity_file(node)
     peer_id = peer_id_of(identity)
-    digest = tree_hash(node)
+    image_digest = tree_hash(node)
+    stamp = image_digest + "." + hashlib.sha256(secret_text.encode("utf-8")).hexdigest()[:16]
     record = identity.parent / "tree"
     previous = record.read_text(encoding="utf-8") if record.is_file() else ""
-    if previous == digest and _reachable(peer_id, addresses):
+    if previous == stamp and _reachable(peer_id, addresses, secret_text):
         return peer_id
-    if previous != digest:
+    if not previous.startswith(image_digest):
         _build_and_push(node)
-    secret, deployment = resources(node, addresses, identity.read_bytes(), digest)
+    secret, deployment = resources(node, addresses, identity.read_bytes(), stamp, secret_text)
     _apply(node, secret)
     _apply(node, deployment)
     _rollout(node)
-    record.write_text(digest, encoding="utf-8")
-    _wait_until_joined(node, peer_id, addresses)
+    record.write_text(stamp, encoding="utf-8")
+    _wait_until_joined(node, peer_id, addresses, secret_text)
     return peer_id
 
 
-def resources(node, sn, identity, digest):
+def resources(node, sn, identity, digest, net):
     """Return the Secret and the Deployment for this one pod."""
     secret_name = f"{node.cluster_name}-identity"
     secret = {
@@ -126,7 +130,10 @@ def resources(node, sn, identity, digest):
         "kind": "Secret",
         "metadata": {"name": secret_name, "namespace": node.namespace},
         "type": "Opaque",
-        "data": {"identity": base64.b64encode(identity).decode("ascii")},
+        "data": {
+            "identity": base64.b64encode(identity).decode("ascii"),
+            "net": base64.b64encode(str(net).encode("utf-8")).decode("ascii"),
+        },
     }
     deployment = {
         "apiVersion": "apps/v1",
@@ -152,6 +159,17 @@ def resources(node, sn, identity, digest):
                             "image": node.image,
                             "imagePullPolicy": "Always",
                             "args": _container_args(sn),
+                            "env": [
+                                {
+                                    "name": "PYOUTER_NET",
+                                    "valueFrom": {
+                                        "secretKeyRef": {
+                                            "name": secret_name,
+                                            "key": "net",
+                                        }
+                                    },
+                                }
+                            ],
                             "volumeMounts": [
                                 {
                                     "name": "identity",
@@ -262,24 +280,24 @@ def _container_args(sn):
     return args
 
 
-def _reachable(peer_id, sn):
+def _reachable(peer_id, sn, net):
     from .peer import peer_health
 
     try:
-        body = peer_health(peer_id, sn)
+        body = peer_health(peer_id, sn, net)
     except (OSError, RuntimeError):
         return False
     return bool(isinstance(body, dict) and body.get("ok"))
 
 
-def _wait_until_joined(node, peer_id, sn):
+def _wait_until_joined(node, peer_id, sn, net):
     from .peer import peer_health
 
     deadline = time.monotonic() + 45
     last = ""
     while time.monotonic() < deadline:
         try:
-            body = peer_health(peer_id, sn)
+            body = peer_health(peer_id, sn, net)
         except Exception as exc:
             last = str(exc)
             time.sleep(0.2)

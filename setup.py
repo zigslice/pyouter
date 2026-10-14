@@ -7,7 +7,7 @@ this_directory = Path(__file__).parent
 long_description = (this_directory / "README.md").read_text()
 
 setup(name="pyouter",
-      version="0.11.0",
+      version="0.12.0",
       description="Python command line tasks router",
       install_requires=["libp2p>=0.8.0"],
       long_description=long_description,

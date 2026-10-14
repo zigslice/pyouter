@@ -1,3 +1,4 @@
+import json
 import os
 import signal
 import subprocess
@@ -6,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.request
 from pathlib import Path
 
 from pyouter.node import deploy_tree
@@ -17,6 +19,9 @@ def _closed(addr):
     head, _, tail = addr.partition("/tcp/")
     _port, _sep, rest = tail.partition("/")
     return f"{head}/tcp/1/{rest}"
+
+
+_NET = "test-net"
 
 
 def _server(workers):
@@ -52,7 +57,7 @@ class PeerDeployTests(unittest.TestCase):
 
     def test_a_slice_reaches_a_peer_that_joined_the_super_node(self):
         with tempfile.TemporaryDirectory() as directory:
-            sn = _Node(directory, "sn", "--sn-listen", "127.0.0.1:0")
+            sn = _Node(directory, "sn", "--sn-listen", "127.0.0.1:0", "--net", _NET)
             try:
                 sn_addr = sn.value("sn ")
                 worker = _Node(
@@ -60,6 +65,8 @@ class PeerDeployTests(unittest.TestCase):
                     "worker",
                     "--sn",
                     sn_addr,
+                    "--net",
+                    _NET,
                 )
                 try:
                     self.assertEqual(worker.value("joined "), sn.peer_id)
@@ -73,11 +80,11 @@ class PeerDeployTests(unittest.TestCase):
 
     def test_a_peer_that_has_not_joined_is_not_given_the_slice(self):
         with tempfile.TemporaryDirectory() as directory:
-            sn = _Node(directory, "sn", "--sn-listen", "127.0.0.1:0")
+            sn = _Node(directory, "sn", "--sn-listen", "127.0.0.1:0", "--net", _NET)
             try:
                 sn_addr = sn.value("sn ")
                 closed = _closed(sn_addr)
-                worker = _Node(directory, "worker", "--sn", closed)
+                worker = _Node(directory, "worker", "--sn", closed, "--net", _NET)
                 try:
                     self.assertEqual(worker.value("joined "), "none")
                     api = _server(1)
@@ -86,7 +93,7 @@ class PeerDeployTests(unittest.TestCase):
                     os.environ["PYOUTER_PEER_IDENTITY"] = str(Path(directory) / "control")
                     try:
                         with self.assertRaises(RuntimeError) as caught:
-                            deploy_tree(Router(api=api), sn=[sn_addr])
+                            deploy_tree(Router(api=api), sn=[sn_addr], net=_NET)
                     finally:
                         if previous is None:
                             os.environ.pop("PYOUTER_PEER_IDENTITY", None)
@@ -101,12 +108,12 @@ class PeerDeployTests(unittest.TestCase):
 
     def test_a_peer_joins_the_super_node_that_answers(self):
         with tempfile.TemporaryDirectory() as directory:
-            live = _Node(directory, "live", "--sn-listen", "127.0.0.1:0")
+            live = _Node(directory, "live", "--sn-listen", "127.0.0.1:0", "--net", _NET)
             try:
                 live_addr = live.value("sn ")
                 decoy = peer_id_of(Path(directory) / "decoy")
                 closed = f"/ip4/127.0.0.1/tcp/1/p2p/{decoy}"
-                worker = _Node(directory, "worker", "--sn", closed, "--sn", live_addr)
+                worker = _Node(directory, "worker", "--sn", closed, "--sn", live_addr, "--net", _NET)
                 try:
                     self.assertEqual(worker.value("joined "), live.peer_id)
                     self._deploy(directory, worker.peer_id, [closed, live_addr], workers=1)
@@ -116,13 +123,79 @@ class PeerDeployTests(unittest.TestCase):
                 live.stop()
                 close_control()
 
+    def test_a_peer_without_the_secret_is_not_admitted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sn = _Node(directory, "sn", "--sn-listen", "127.0.0.1:0", "--net", _NET)
+            try:
+                sn_addr = sn.value("sn ")
+                worker = _Node(directory, "worker", "--sn", sn_addr, "--net", "someone-else")
+                try:
+                    self.assertEqual(worker.value("joined "), "none")
+                finally:
+                    worker.stop()
+            finally:
+                sn.stop()
+
+    def test_a_push_without_the_secret_does_not_land(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sn = _Node(directory, "sn", "--sn-listen", "127.0.0.1:0", "--net", _NET)
+            try:
+                sn_addr = sn.value("sn ")
+                worker = _Node(directory, "worker", "--sn", sn_addr, "--net", _NET)
+                try:
+                    self.assertEqual(worker.value("joined "), sn.peer_id)
+                    api = _server(1)
+                    api.runtime = worker.peer_id
+                    previous = os.environ.get("PYOUTER_PEER_IDENTITY")
+                    os.environ["PYOUTER_PEER_IDENTITY"] = str(Path(directory) / "control")
+                    try:
+                        with self.assertRaises(RuntimeError) as caught:
+                            deploy_tree(Router(api=api), sn=[sn_addr])
+                    finally:
+                        if previous is None:
+                            os.environ.pop("PYOUTER_PEER_IDENTITY", None)
+                        else:
+                            os.environ["PYOUTER_PEER_IDENTITY"] = previous
+                        close_control()
+                    self.assertIn("network secret", str(caught.exception))
+                    port = int(worker.node_line.split()[1])
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as response:
+                        body = json.loads(response.read().decode("utf-8"))
+                    self.assertFalse(body["deployed"])
+                finally:
+                    worker.stop()
+            finally:
+                sn.stop()
+
+    def test_joining_without_a_secret_is_refused(self):
+        env = os.environ.copy()
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
+        env.pop("PYOUTER_NET", None)
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "pyouter.node", "--port", "0", "--sn-listen", "127.0.0.1:0"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            self.fail("a super node without --net kept running")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("this network needs --net", stderr)
+        self.assertNotIn("node ", stdout)
+
     def _deploy(self, directory, peer_id, sn, workers):
         api = _server(workers)
         api.runtime = peer_id
         previous = os.environ.get("PYOUTER_PEER_IDENTITY")
         os.environ["PYOUTER_PEER_IDENTITY"] = str(Path(directory) / "control")
         try:
-            sent = deploy_tree(Router(api=api), sn=sn)
+            sent = deploy_tree(Router(api=api), sn=sn, net=_NET)
         finally:
             if previous is None:
                 os.environ.pop("PYOUTER_PEER_IDENTITY", None)

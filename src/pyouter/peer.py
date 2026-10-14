@@ -10,8 +10,14 @@ slice is delivered.
 A super node is a runtime started with ``--sn-listen``. Several super nodes
 are several entries in the same list. Each runtime connects to every entry
 it can reach. The list is not copied onto each layer.
+
+Every peer on that network, the super node and the control process included,
+is started with the same ``--net`` secret. A peer that does not have it is
+not given a relay slot, and a stream it opens is refused.
 """
 
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -42,6 +48,19 @@ def peer_id_of(path):
     return ID.from_pubkey(pair.public_key).to_base58()
 
 
+def network_secret(net=None):
+    """Return the shared secret for this network.
+
+    An explicit ``net`` wins. Otherwise the value is ``PYOUTER_NET``.
+    An empty string means this process was not given one.
+    """
+    if net is None:
+        net = os.environ.get("PYOUTER_NET", "")
+    if net is None:
+        return ""
+    return str(net).strip()
+
+
 def super_nodes(sn=None):
     """Return the super-node multiaddrs for this control process."""
     if sn is None:
@@ -53,9 +72,9 @@ def super_nodes(sn=None):
     return [str(item).strip() for item in sn if str(item).strip()]
 
 
-def peer_health(peer_id, sn=None):
+def peer_health(peer_id, sn=None, net=None):
     """Ask ``peer_id`` for its health through the super nodes in ``sn``."""
-    return _control_request(peer_id, {"op": "health"}, sn)
+    return _control_request(peer_id, {"op": "health"}, sn, net)
 
 
 def peer_reachable(peer_id):
@@ -74,7 +93,7 @@ def peer_reachable(peer_id):
     return bool(isinstance(body, dict) and body.get("ok"))
 
 
-def push_peer(peer_id, layer, sn=None):
+def push_peer(peer_id, layer, sn=None, net=None):
     """Push one layer slice to the peer ``peer_id``."""
     body = {
         "op": "deploy",
@@ -85,7 +104,7 @@ def push_peer(peer_id, layer, sn=None):
             "workers": layer.workers,
         },
     }
-    return _control_request(peer_id, body, sn)
+    return _control_request(peer_id, body, sn, net)
 
 
 def close_control():
@@ -101,14 +120,16 @@ def close_control():
 class PeerNode:
     """One running peer. A super node is the same object with hop enabled."""
 
-    def __init__(self, identity, sn=(), sn_listen=None, handler=None):
+    def __init__(self, identity, sn=(), sn_listen=None, handler=None, net=None):
         self.identity = Path(identity)
         self.sn = list(sn)
         self.sn_listen = sn_listen
         self.handler = handler
+        self.net = network_secret(net)
         self.peer_id = ""
         self.listen_addr = ""
         self.joined = []
+        self._admitted = set()
         self._thread = None
         self._token = None
         self._ready = threading.Event()
@@ -116,6 +137,8 @@ class PeerNode:
 
     def start(self):
         """Listen and join every reachable super node. Block until ready."""
+        if (self.sn or self.sn_listen is not None) and not self.net:
+            raise RuntimeError("this network needs --net")
         self._thread = threading.Thread(target=self._thread_main, name="pyouter-peer", daemon=True)
         self._thread.start()
         if not self._ready.wait(20):
@@ -188,10 +211,11 @@ class PeerNode:
         if self.sn_listen:
             listen_host, listen_port = self.sn_listen
             listen = [multiaddr.Multiaddr(f"/ip4/{listen_host}/tcp/{int(listen_port)}")]
+            protocol = _guarded_hop(host, limits, self._admitted)
         else:
             listen_host = "127.0.0.1"
             listen = [multiaddr.Multiaddr("/ip4/127.0.0.1/tcp/0")]
-        protocol = CircuitV2Protocol(host, limits=limits, allow_hop=self.sn_listen is not None)
+            protocol = CircuitV2Protocol(host, limits=limits, allow_hop=False)
         punch = DCUtRProtocol(host)
         roles = RelayRole.CLIENT | RelayRole.STOP
         if self.sn_listen is not None:
@@ -232,6 +256,7 @@ class PeerNode:
                 sn_id = ID.from_base58(sn_text)
                 with trio.fail_after(3):
                     await self._host.connect(PeerInfo(sn_id, [address]))
+                    await self._hello(sn_id)
                     stream = await self._host.new_stream(sn_id, [PROTOCOL_ID])
                     ok = await self._transport.reserve(stream, sn_id, nursery)
                 if ok:
@@ -240,11 +265,31 @@ class PeerNode:
                 continue
         return joined
 
+    async def _hello(self, sn_id):
+        from libp2p.custom_types import TProtocol
+
+        stream = await self._host.new_stream(sn_id, [TProtocol(_PROTOCOL)])
+        await _write_message(stream, {"op": "hello", "auth": _proof(self.net)})
+        reply = await _read_message(stream)
+        await stream.close()
+        if not isinstance(reply, dict) or reply.get("error") or not reply.get("ok"):
+            raise RuntimeError("refused")
+
     async def _on_stream(self, stream):
         import trio
 
         try:
             message = await _read_message(stream)
+            if not _accept(self.net, message):
+                await _write_message(stream, {"error": "refused"})
+                return
+            remote = _remote_id(stream)
+            if message.get("op") == "hello":
+                if remote:
+                    self._admitted.add(remote)
+                await _write_message(stream, {"ok": True})
+                return
+            message = {key: value for key, value in message.items() if key != "auth"}
             if self.handler is None:
                 reply = {"error": "peer has no handler"}
             else:
@@ -286,7 +331,9 @@ class PeerNode:
 
         with trio.fail_after(15):
             stream = await self._host.new_stream(target, [TProtocol(_PROTOCOL)])
-            await _write_message(stream, message)
+            body = dict(message)
+            body["auth"] = _proof(self.net)
+            await _write_message(stream, body)
             reply = await _read_message(stream)
             await stream.close()
         if not isinstance(reply, dict):
@@ -334,24 +381,27 @@ class PeerNode:
         raise RuntimeError(f"peer {target.to_base58()} has not joined a super node: {last}")
 
 
-def _control_request(peer_id, message, sn):
+def _control_request(peer_id, message, sn, net):
     nodes = super_nodes(sn)
     if not nodes:
         raise RuntimeError(f"peer {peer_id} needs a super node")
-    peer = _control_peer(nodes)
+    secret = network_secret(net)
+    if not secret:
+        raise RuntimeError(f"peer {peer_id} needs a network secret")
+    peer = _control_peer(nodes, secret)
     return peer.request(peer_id, message)
 
 
-def _control_peer(nodes):
+def _control_peer(nodes, secret):
     global _control, _control_key
     identity = os.environ.get("PYOUTER_PEER_IDENTITY")
     if not identity:
         identity = str(Path.home() / ".pyouter" / "peer" / "identity")
-    key = (tuple(nodes), identity)
+    key = (tuple(nodes), identity, secret)
     if _control is not None and _control_key == key and _control._token is not None:
         return _control
     close_control()
-    peer = PeerNode(identity, sn=nodes, handler=_local_handler)
+    peer = PeerNode(identity, sn=nodes, handler=_local_handler, net=secret)
     peer.start()
     _control = peer
     _control_key = key
@@ -408,6 +458,66 @@ def _direct_addrs(host, peer_id):
             continue
         found.append(addr)
     return found
+
+
+def _guarded_hop(host, limits, admitted):
+    """A super node that relays only peers that presented this network's secret."""
+    from libp2p.relay.circuit_v2.protocol import CircuitV2Protocol
+    from libp2p.relay.circuit_v2.protocol_buffer import StatusCode
+
+    class _Hop(CircuitV2Protocol):
+        def __init__(self):
+            super().__init__(host, limits=limits, allow_hop=True)
+            self._admitted = admitted
+
+        async def _handle_reserve(self, stream, msg):
+            if not _admitted_peer(stream, self._admitted):
+                await self._deny(stream)
+                return
+            await super()._handle_reserve(stream, msg)
+
+        async def _handle_connect(self, stream, msg):
+            if not _admitted_peer(stream, self._admitted):
+                await self._deny(stream)
+                return
+            await super()._handle_connect(stream, msg)
+
+        async def _deny(self, stream):
+            await self._send_status(stream, StatusCode.PERMISSION_DENIED, "refused")
+            try:
+                await stream.reset()
+            except Exception:
+                pass
+
+    return _Hop()
+
+
+def _admitted_peer(stream, admitted):
+    remote = _remote_id(stream)
+    return bool(remote) and remote in admitted
+
+
+def _remote_id(stream):
+    conn = getattr(stream, "muxed_conn", None)
+    peer = getattr(conn, "peer_id", None)
+    if peer is None:
+        return ""
+    if hasattr(peer, "to_base58"):
+        return peer.to_base58()
+    return str(peer)
+
+
+def _proof(secret):
+    return hmac.new(secret.encode("utf-8"), b"pyouter", hashlib.sha256).hexdigest()
+
+
+def _accept(secret, message):
+    if not secret or not isinstance(message, dict):
+        return False
+    given = message.get("auth")
+    if not isinstance(given, str):
+        return False
+    return hmac.compare_digest(given, _proof(secret))
 
 
 def _load_keypair(path):

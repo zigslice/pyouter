@@ -406,6 +406,8 @@ Four processes finish the same concurrent work in about a quarter of the time. O
 
 A runtime is one peer. Start the super node, start each layer's runtime with that super node's multiaddr, copy the peer id it prints into `runtime`, then call `deploy_tree`. The layer does not store the super node. The control process carries the list.
 
+The control process is a peer too. A peer id is not a credential: anyone can make one. Every process on this network, super nodes included, is started with the same `--net` secret. A process that does not have it is not given a relay slot, and a stream it opens is refused. `deploy_tree` takes that secret as `net`, or reads `PYOUTER_NET`.
+
 `runtime="http://127.0.0.1:7711"` still dials that URL and does not use the list.
 
 ### start
@@ -413,7 +415,7 @@ A runtime is one peer. Start the super node, start each layer's runtime with tha
 On the machine that other peers can reach, start the super node. `--identity` is the key file. The same file is the same peer id after a restart. The default file is `~/.pyouter/peer/identity`.
 
 ```bash
-python -m pyouter.node --port 7710 --identity ~/.pyouter/peer/sn --sn-listen 127.0.0.1:4001
+python -m pyouter.node --port 7710 --identity ~/.pyouter/peer/sn --sn-listen 127.0.0.1:4001 --net "$PYOUTER_NET"
 ```
 
 ```text
@@ -428,7 +430,8 @@ Start the runtime for one layer, and point it at that multiaddr:
 
 ```bash
 python -m pyouter.node --port 7711 --identity ~/.pyouter/peer/api \
-  --sn /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA...
+  --sn /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA... \
+  --net "$PYOUTER_NET"
 ```
 
 ```text
@@ -443,7 +446,8 @@ A second super node is another process. A runtime connects to every entry that a
 
 ```bash
 python -m pyouter.node --port 7720 --identity ~/.pyouter/peer/sn-b --sn-listen 127.0.0.1:4002 \
-  --sn /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA...
+  --sn /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA... \
+  --net "$PYOUTER_NET"
 ```
 
 ```text
@@ -458,7 +462,8 @@ The second super node is given the first super node's multiaddr, so the two see 
 ```bash
 python -m pyouter.node --port 7711 --identity ~/.pyouter/peer/api \
   --sn /ip4/127.0.0.1/tcp/1/p2p/12D3KooWClosed... \
-  --sn /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA...
+  --sn /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA... \
+  --net "$PYOUTER_NET"
 ```
 
 The closed address fails. The live one answers. The runtime prints `joined 12D3KooWSnA...` and no line for the closed address.
@@ -470,12 +475,15 @@ The closed address fails. The live one answers. The runtime prints `joined 12D3K
 | `--identity` | `~/.pyouter/peer/identity` | key file for this peer id |
 | `--sn-listen` |  | `host:port` that makes this process a super node |
 | `--sn` |  | multiaddr of one super node. Repeat the flag for each one |
+| `--net` | `PYOUTER_NET` | shared secret. Required to join or to serve a super node |
 
 ### the tree
 
 Four layers, four runtimes, two super nodes. Each runtime is already up and has printed `joined` for at least one of these super nodes. Copy each `peer` line into `runtime`. The ids below stand in for those lines. `sn` is the same pair of multiaddrs the runtimes joined. It is an argument of `deploy_tree`, not a field on a layer.
 
 ```python
+import os
+
 from flask import Flask
 
 from pyouter.app import App
@@ -518,6 +526,7 @@ sent = deploy_tree(
         "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA...",
         "/ip4/127.0.0.1/tcp/4002/p2p/12D3KooWSnB...",
     ],
+    net=os.environ["PYOUTER_NET"],
 )
 ```
 
@@ -534,7 +543,7 @@ sent = deploy_tree(
 
 A second `deploy_tree` with the same list replaces the pool on the same peer. The new record carries the port the replacement pool bound.
 
-Leave `sn` out and the control process reads `PYOUTER_SN`, a comma-separated list of the same multiaddrs. `PYOUTER_PEER_IDENTITY` is the control peer's key file. Unset, that file is `~/.pyouter/peer/identity`.
+Leave `sn` out and the control process reads `PYOUTER_SN`, a comma-separated list of the same multiaddrs. Leave `net` out and it reads `PYOUTER_NET`. `PYOUTER_PEER_IDENTITY` is the control peer's key file. Unset, that file is `~/.pyouter/peer/identity`. A peer id with a super node but no secret is refused before a slice is sent.
 
 Hole punching runs after the super node has opened the stream to the peer. A failed punch still leaves the slice on that stream.
 
@@ -555,10 +564,15 @@ PYTHONPATH=src python3 -m unittest src.tests.test_peer -v
 | `test_a_slice_reaches_a_peer_that_joined_the_super_node` | a worker that printed `joined` receives the slice, and a second push delivers to the same peer |
 | `test_a_peer_that_has_not_joined_is_not_given_the_slice` | `--sn` pointed at a closed port prints `joined none`; deploy raises `has not joined` |
 | `test_a_peer_joins_the_super_node_that_answers` | one closed multiaddr and one live super node; the worker joins the live one and receives the slice |
+| `test_a_peer_without_the_secret_is_not_admitted` | a worker started with a different `--net` prints `joined none` |
+| `test_a_push_without_the_secret_does_not_land` | `deploy_tree` with no secret raises, and the worker's slice stays undeployed |
+| `test_joining_without_a_secret_is_refused` | `--sn-listen` without `--net` exits before it listens |
 
 The slice in those tests is one server layer:
 
 ```python
+import os
+
 from pyouter.node import deploy_tree
 from pyouter.router import Router
 
@@ -572,7 +586,7 @@ api.balancer = "uvicorn"
 api.workers = 2
 api.runtime = worker_peer_id  # the "peer " line of the runtime that printed "joined"
 
-sent = deploy_tree(Router(api=api), sn=[sn_multiaddr])
+sent = deploy_tree(Router(api=api), sn=[sn_multiaddr], net=os.environ["PYOUTER_NET"])
 # sent[0]["path"] == "api"
 # sent[0]["kind"] == "server"
 # sent[0]["workers"] == 2
@@ -586,6 +600,8 @@ sent = deploy_tree(Router(api=api), sn=[sn_multiaddr])
 A cloud account does not hand you the Kubernetes nodes. You push an image; the cluster starts the container. That container is one pod, and the pod is one peer. `workers` is the process pool inside the pod. The Deployment's replica count is 1.
 
 ```python
+import os
+
 from flask import Flask
 
 from pyouter.app import App
@@ -615,12 +631,13 @@ app.include(Router(cli=Router(box=edge)))
 sent = deploy_tree(
     app.router,
     sn=["/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA..."],
+    net=os.environ["PYOUTER_NET"],
 )
 ```
 
 `registry.example.com/app:1.2` is the name that gets built and pushed. pyouter writes the image from this tree: the pyouter package, the application, and an entrypoint of `python -m pyouter.node`. No Dockerfile is written by hand.
 
-The pod mounts a Secret at `/var/pyouter/identity`. That file is created on the control machine under `~/.pyouter/cluster` and reused, so a restart of the pod is the same peer id. The container args are `--sn` for each super node passed to this `deploy_tree` call. The layer does not store that list. `imagePullPolicy` is `Always`. The pod template carries a hash of the tree, so a new image rolls out a new pod.
+The pod mounts a Secret at `/var/pyouter/identity`. That file is created on the control machine under `~/.pyouter/cluster` and reused, so a restart of the pod is the same peer id. The same Secret holds the network secret, and the container reads it from `PYOUTER_NET`. The container args are `--sn` for each super node passed to this `deploy_tree` call. The layer does not store that list. `imagePullPolicy` is `Always`. The pod template carries a hash of the tree, so a new image rolls out a new pod.
 
 `sent` is one record per layer, outer path first. The cluster record and the server inside it come back from that one peer. `port` is the free port that layer's pool bound inside the pod:
 
@@ -645,11 +662,16 @@ PYTHONPATH=src python3 -m unittest src.tests.test_cluster -v
 | --- | --- |
 | `test_a_cluster_image_must_name_a_registry` | a bare image name is refused |
 | `test_a_cluster_without_a_super_node_is_refused` | `deploy_tree` with no `sn` raises before `docker` runs |
-| `test_a_cluster_manifest_is_one_pod` | the Deployment has one replica, the identity mount, and `--sn`; `workers` is not a replica count |
+| `test_a_cluster_manifest_is_one_pod` | the Deployment has one replica, the identity mount, and `--sn`; the network secret is in the Secret, not the args |
 | `test_a_cluster_layer_is_one_pod_and_one_peer` | the slice reaches the peer that joined; a second push and a `workers` change skip the build; a new image name builds again |
 | `test_a_layer_with_its_own_runtime_is_not_sent_to_the_pod` | a child that names `runtime` is pushed there, and the pod receives the cluster slice |
 
 ## What's new
+
+### 0.12.0
+
+* a super-node network requires a shared `--net` secret; a peer without it is not relayed and its streams are refused
+* `deploy_tree(..., net=)` carries that secret, and a cluster pod reads it from `PYOUTER_NET`
 
 ### 0.11.0
 

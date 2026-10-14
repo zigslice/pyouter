@@ -51,6 +51,7 @@ class ClusterShapeTests(unittest.TestCase):
             ["/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSn"],
             b"key",
             "abc",
+            "s3cret",
         )
         self.assertEqual(deployment["spec"]["replicas"], 1)
         container = deployment["spec"]["template"]["spec"]["containers"][0]
@@ -59,7 +60,11 @@ class ClusterShapeTests(unittest.TestCase):
         self.assertEqual(container["volumeMounts"][0]["mountPath"], "/var/pyouter/identity")
         self.assertEqual(container["args"].count("--sn"), 1)
         self.assertIn("/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSn", container["args"])
+        self.assertNotIn("s3cret", json.dumps(container["args"]))
+        self.assertEqual(container["env"][0]["name"], "PYOUTER_NET")
+        self.assertEqual(container["env"][0]["valueFrom"]["secretKeyRef"]["key"], "net")
         self.assertEqual(secret["data"]["identity"], base64.b64encode(b"key").decode("ascii"))
+        self.assertEqual(secret["data"]["net"], base64.b64encode(b"s3cret").decode("ascii"))
         self.assertEqual(deployment["metadata"]["annotations"]["pyouter.dev/tree"], "abc")
         self.assertNotIn('"replicas": 4', json.dumps(deployment))
 
@@ -88,7 +93,7 @@ class ClusterDeployTests(unittest.TestCase):
             docker = _write_docker(directory)
             kubectl = _write_kubectl(directory)
             home = Path(directory) / "home"
-            sn = _Node(directory, "sn", "--sn-listen", "127.0.0.1:0")
+            sn = _Node(directory, "sn", "--sn-listen", "127.0.0.1:0", "--net", "test-net")
             previous = os.environ.get("PYOUTER_PEER_IDENTITY")
             os.environ["PYOUTER_PEER_IDENTITY"] = str(Path(directory) / "control")
             try:
@@ -104,7 +109,7 @@ class ClusterDeployTests(unittest.TestCase):
                     home=str(home),
                 )
                 root = Router(edge=edge)
-                sent = deploy_tree(root, sn=[sn_addr])
+                sent = deploy_tree(root, sn=[sn_addr], net="test-net")
                 self.assertEqual([item["path"] for item in sent], ["edge", "edge.api"])
                 self.assertEqual(sent[0]["kind"], "cluster")
                 self.assertEqual(sent[0]["workers"], 4)
@@ -118,16 +123,16 @@ class ClusterDeployTests(unittest.TestCase):
                     deployment["spec"]["template"]["spec"]["containers"][0]["image"],
                     "registry.example.com/app:1.2",
                 )
-                again = deploy_tree(root, sn=[sn_addr])
+                again = deploy_tree(root, sn=[sn_addr], net="test-net")
                 self.assertEqual(again[0]["workers"], 4)
                 self.assertEqual(_docker_count(directory, "build"), 1)
                 edge.workers = 3
-                changed = deploy_tree(root, sn=[sn_addr])
+                changed = deploy_tree(root, sn=[sn_addr], net="test-net")
                 self.assertEqual(changed[0]["workers"], 3)
                 self.assertEqual(changed[1]["workers"], 2)
                 self.assertEqual(_docker_count(directory, "build"), 1)
                 edge.image = "registry.example.com/app:1.3"
-                rolled = deploy_tree(root, sn=[sn_addr])
+                rolled = deploy_tree(root, sn=[sn_addr], net="test-net")
                 self.assertEqual(rolled[0]["workers"], 3)
                 self.assertEqual(_docker_count(directory, "build"), 2)
                 self.assertEqual(
@@ -148,7 +153,7 @@ class ClusterDeployTests(unittest.TestCase):
             docker = _write_docker(directory)
             kubectl = _write_kubectl(directory)
             home = Path(directory) / "home"
-            sn = _Node(directory, "sn", "--sn-listen", "127.0.0.1:0")
+            sn = _Node(directory, "sn", "--sn-listen", "127.0.0.1:0", "--net", "test-net")
             previous = os.environ.get("PYOUTER_PEER_IDENTITY")
             os.environ["PYOUTER_PEER_IDENTITY"] = str(Path(directory) / "control")
             try:
@@ -165,7 +170,7 @@ class ClusterDeployTests(unittest.TestCase):
                         kubectl=str(kubectl),
                         home=str(home),
                     )
-                    sent = deploy_tree(Router(edge=edge), sn=[sn_addr])
+                    sent = deploy_tree(Router(edge=edge), sn=[sn_addr], net="test-net")
                     self.assertEqual(sent[0]["kind"], "cluster")
                     self.assertEqual(sent[0]["path"], "edge")
                     self.assertEqual(health(url)["path"], "edge.api")
@@ -231,6 +236,7 @@ def _write_kubectl(directory):
 
             state_path = {str(state)!r}
             identity_path = {str(identity)!r}
+            net_path = {str(Path(directory) / "pod-net")!r}
             log_path = {str(log)!r}
             argv = sys.argv[1:]
 
@@ -257,6 +263,9 @@ def _write_kubectl(directory):
                 raw = base64.b64decode(document["data"]["identity"])
                 with open(identity_path, "wb") as handle:
                     handle.write(raw)
+                net = base64.b64decode(document["data"]["net"]).decode("utf-8")
+                with open(net_path, "w") as handle:
+                    handle.write(net)
             if kind == "Deployment":
                 pid = data.get("pid")
                 if pid:
@@ -281,8 +290,12 @@ def _write_kubectl(directory):
                 slot = args.index("--identity")
                 args[slot + 1] = identity_path
                 log = open(log_path, "ab")
+                env = os.environ.copy()
+                if os.path.exists(net_path):
+                    env["PYOUTER_NET"] = open(net_path).read()
                 proc = subprocess.Popen(
                     [sys.executable, "-m", "pyouter.node", *args],
+                    env=env,
                     stdout=log,
                     stderr=log,
                     stdin=subprocess.DEVNULL,
