@@ -128,8 +128,11 @@ def describe(node):
 
 
 def build_tree(router):
+    from .mapview import place_of
+
     def build(node, name, path):
         info = describe(node)
+        place = place_of(node)
         children = []
         if isinstance(node, Router):
             for key, child in node.route.items():
@@ -147,6 +150,14 @@ def build_tree(router):
             "signature": info["signature"],
             "doc": info["doc"],
             "children": children,
+            "layer": place["layer"],
+            "runtime": place["runtime"],
+            "peer_id": place["peer_id"],
+            "ip": place["ip"],
+            "host_port": place["host_port"],
+            "sn": place["sn"],
+            "reach": "",
+            "here": False,
         }
 
     return build(router, "(root)", "")
@@ -533,11 +544,15 @@ class WebBridge:
             event["token"] = None
 
     def snapshot(self):
+        from .mapview import with_reach
+
         return {
-            "tree": self.tree,
+            "tree": with_reach(self.tree),
             "nodes": self.store.snapshot_nodes(),
             "seq": self.store.seq,
             "focus": self.focus,
+            "here": "",
+            "mode": "app",
             "script": self.script,
         }
 

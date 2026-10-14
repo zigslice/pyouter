@@ -58,6 +58,22 @@ def peer_health(peer_id, sn=None):
     return _control_request(peer_id, {"op": "health"}, sn)
 
 
+def peer_reachable(peer_id):
+    """Return whether the control peer that is already running can reach ``peer_id``.
+
+    This does not start a control peer. A page asking about reachability
+    must not boot one.
+    """
+    peer = _control
+    if peer is None or peer._token is None:
+        return False
+    try:
+        body = peer.request(peer_id, {"op": "health"})
+    except Exception:
+        return False
+    return bool(isinstance(body, dict) and body.get("ok"))
+
+
 def push_peer(peer_id, layer, sn=None):
     """Push one layer slice to the peer ``peer_id``."""
     body = {
