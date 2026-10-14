@@ -20,7 +20,7 @@ Shell completion is in [advanced.md](./advanced.md).
 
 ## For a coding agent
 
-`skills/` is the set of skills an agent should follow when it writes or runs pyouter. Cursor loads that directory through `.agents/skills`. Start with [skills/pyouter-help/SKILL.md](skills/pyouter-help/SKILL.md). A new project and an existing pile of scripts take different first steps. [skills/pyouter-init/SKILL.md](skills/pyouter-init/SKILL.md) creates the first `app.py` and then stops.
+`skills/` is the set of skills an agent should follow when it writes or runs pyouter. Cursor loads that directory through `.agents/skills`. Start with [skills/pyouter-help/SKILL.md](skills/pyouter-help/SKILL.md). A new project uses [skills/pyouter-init/SKILL.md](skills/pyouter-init/SKILL.md) and stops at the first route. An existing project uses [skills/pyouter-refactor/SKILL.md](skills/pyouter-refactor/SKILL.md), which keeps the current commands, services, and containers working while it turns them into one tree.
 
 ## A route
 
