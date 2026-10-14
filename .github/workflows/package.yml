@@ -1,0 +1,75 @@
+# Build two downloadable packages. This does not publish to PyPI.
+# Uploading to PyPI needs a token or trusted publishing, which this
+# repository does not configure. A v* tag attaches the same files to a
+# GitHub Release.
+
+name: Package
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the Python package
+        run: |
+          python -m pip install build
+          python -m build
+
+      - name: Pack the skills
+        run: python scripts/pack_skills.py
+
+      - name: Stage the two packages
+        run: |
+          mkdir -p packages/python packages/skills
+          cp dist/*.whl dist/*.tar.gz packages/python/
+          cp dist/pyouter-skills-*.zip packages/skills/
+          test -n "$(ls packages/python)"
+          test -n "$(ls packages/skills)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pyouter-python
+          path: packages/python/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pyouter-skills
+          path: packages/skills/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pyouter-*
+          path: release
+          merge-multiple: true
+
+      - name: Attach both packages to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" release/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$tag" \
+              --notes "Python package and skills package. This release does not publish to PyPI."
+          fi
