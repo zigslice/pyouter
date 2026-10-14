@@ -1,7 +1,7 @@
-# Build two downloadable packages. This does not publish to PyPI.
-# Uploading to PyPI needs a token or trusted publishing, which this
-# repository does not configure. A v* tag attaches the same files to a
-# GitHub Release.
+# Build two packages and, on main, publish a GitHub Release.
+# The release tag is v<version> from setup.py. The same version updates
+# that release's files. A new version in setup.py publishes the next one.
+# This does not publish to PyPI. That needs a token or trusted publishing.
 
 name: Package
 
@@ -9,7 +9,6 @@ on:
   pull_request:
   push:
     branches: [main]
-    tags: ["v*"]
 
 jobs:
   package:
@@ -48,7 +47,7 @@ jobs:
           path: packages/skills/
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: package
     runs-on: ubuntu-latest
     permissions:
@@ -60,16 +59,21 @@ jobs:
           path: release
           merge-multiple: true
 
-      - name: Attach both packages to the GitHub Release
+      - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="${GITHUB_REF_NAME}"
+          archive=$(echo release/pyouter-skills-*.zip)
+          version=$(basename "$archive" .zip)
+          version=${version#pyouter-skills-}
+          tag="v${version}"
+          notes="Python package and skills package for ${tag}. This release does not publish to PyPI."
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" release/* --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$tag" release/* \
               --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
               --title "$tag" \
-              --notes "Python package and skills package. This release does not publish to PyPI."
+              --notes "$notes"
           fi
