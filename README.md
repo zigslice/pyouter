@@ -1,139 +1,26 @@
 # Pyouter
 
-Pyouter is a tasks router by  hierarchy and layered tasks, which may come from command line or http restful api
+English · [Chinese](./README.zh-CN.md)
 
-Deepwki: https://deepwiki.com/fanfeilong/pyouter
+Pyouter is a hierarchical router for tasks. A command, an HTTP route, a container, an SSH host, and a cluster pod are nodes in one tree. A path walks that tree. A container, an SSH host, a cluster, and a web service each start their own worker pool, so crossing one is a new layer.
 
 ![pyouter](pyouter.gif)
 
-节点 runtime 启动后会打印 `web http://<ip>:<port>`。用浏览器打开这个地址就是上面这张地图：层有自己的颜色，当前这台机器上的层标着「你在这里」，绿色是可达，红色是不可达。
+A node runtime prints `web http://<ip>:<port>`. Open that address and the page is the map above. A container is blue, an SSH host is purple, a cluster is teal, and a web service is orange. The outermost layer deployed on this runtime is marked, so you can see where you are. With nothing deployed, that mark sits on the root. Green means reachable. Red means unreachable. The words on the page are Chinese.
 
-## INSTALL
+The examples below run on this machine. They do not join a super node, and they do not need `--net`. The shared secret is only for a process that joins a super node, or for `deploy_tree` when a layer's runtime is a peer id.
 
-install pyouter
+## Install
 
 ```shell
 pip install pyouter
 ```
 
-* advanced: [install for shell completion support](./advanced.md)
+Shell completion is in [advanced.md](./advanced.md).
 
-## examples
+## A route
 
-* [src/tests/test.py](src/tests/test.py)
-  * depends: [src/tests/config.json](src/tests/config.json)
-
-minimal example code for pyouoter:
-
-```python
-from typing import Any
-from pyouter.app import App
-from pyouter.router import Router
-
-import json
-import asyncio
-import time
-
-
-async def hello(config, options):
-    print("hello function")
-    
-def hello_sync(config, options):
-    print("hello sync")
-
-class Hello:
-    def __init__(self, value) -> None:
-        self.value = value
-    
-    # Router class SHOULD provider method: `run(self, config, options)`
-    async def run(self, config, options) -> Any:
-        self.config = config
-        self.options = options
-        await self.inner()
-    
-    async def inner(self):
-        print(f"run Hello, {self.value}")
-        await asyncio.sleep(2)
-        print(f"hello class object, self.options.debug:{self.options.debug}, sleep 2s")
-        if self.options.debug:
-            print(f'debug, {self.value}')
-            
-class Hello_Sync:
-    def __init__(self, value) -> None:
-        self.value = value
-    
-    # Router class SHOULD provider method: `run(self, config, options)`
-    def run(self, config, options) -> Any:
-        self.config = config
-        self.options = options
-        self.inner()
-    
-    def inner(self):
-        print(f"run Hello_Sync, {self.value}")
-        time.sleep(self.value)
-        print(f"hello class object, self.options.debug:{self.options.debug}, sleep {self.value}s")
-        if self.options.debug:
-            print(f'debug, {self.value}')
-
-if __name__=="__main__":
-    '''
-    Usage:
-        ## start pyouter, then route into that process:
-        * python test.py
-        * python test.py test.hello.func
-        * python test.py test.hello.obj
-        * python test.py test
-        
-        ## dump router path only:
-        * python test.py test.hello -i
-        * python test.py test.hello --insepect
-        
-        ## dump router path and execute:
-        * python test.py test.hello -v
-        * python test.py test.hello --view
-
-        ## browse and run in a local web ui:
-        * python test.py --web
-        * python test.py test.hello --web --no-browser
-    '''
-    
-    app = App(
-        config='config.json',
-    )
-    
-    app.option(
-        '-d', '--debug',
-        dest='debug',
-        action="store_true",
-        help='debug'
-    )
-    
-    app.use(
-        router=Router(
-            test=Router(
-                hello=Router(
-                    func=hello,
-                    obj=Hello("world"),
-                    obj2=Hello_Sync(10)
-                ),
-                hello2=hello,
-                hello3=Router(
-                    func=hello_sync,
-                    obj=Hello("world"),
-                    obj2=Hello_Sync(20),
-                )
-            )
-        )
-    )
-    
-    app.run()
-    
-    
-```
-
-## framework
-
-An application is a router tree plus one context per run. `use()` replaces the tree. `include()` mounts another tree, optionally under a prefix. A leaf is still a function or an object with `run`. A single parameter receives a `Context`; two parameters keep the `(config, options)` form. An object's `run` method follows the same rule.
+A leaf is a function. One parameter receives a context. `include()` mounts the tree.
 
 ```python
 from pyouter.app import App
@@ -153,9 +40,97 @@ python app.py
 python app.py hello
 ```
 
-`python app.py` starts one process and leaves it running. Every later command routes a node into that process, prints the result, and exits. A function, a router, a web service, and a web endpoint are the same kind of step: the process you started is what executes the node. The command delivers the path.
+`python app.py` starts one process and leaves it running. `python app.py hello` routes `hello` into that process, prints the result, and exits.
 
-`python app.py hello` runs `hello` there. An object keeps its state across commands, because those commands stay on the worker that first ran it. A second `python app.py` prints `pyouter already running`. `python app.py --worker` joins the pools as another process. A command issued before the first process exists fails and tells you to start it. `--tasks` and `--tree` only read the route tree, so they run in the command itself.
+## The original example
+
+[src/tests/test.py](src/tests/test.py) still runs, with [src/tests/config.json](src/tests/config.json). A function may take `(config, options)` instead of one context. An object is a leaf when it has `run`. This script does not use the peer network.
+
+```python
+from typing import Any
+from pyouter.app import App
+from pyouter.router import Router
+
+import asyncio
+import time
+
+
+async def hello(config, options):
+    print("hello function")
+
+def hello_sync(config, options):
+    print("hello sync")
+
+class Hello:
+    def __init__(self, value) -> None:
+        self.value = value
+
+    async def run(self, config, options) -> Any:
+        self.config = config
+        self.options = options
+        await self.inner()
+
+    async def inner(self):
+        print(f"run Hello, {self.value}")
+        await asyncio.sleep(2)
+        print(f"hello class object, self.options.debug:{self.options.debug}, sleep 2s")
+        if self.options.debug:
+            print(f"debug, {self.value}")
+
+class Hello_Sync:
+    def __init__(self, value) -> None:
+        self.value = value
+
+    def run(self, config, options) -> Any:
+        self.config = config
+        self.options = options
+        self.inner()
+
+    def inner(self):
+        print(f"run Hello_Sync, {self.value}")
+        time.sleep(self.value)
+        print(f"hello class object, self.options.debug:{self.options.debug}, sleep {self.value}s")
+        if self.options.debug:
+            print(f"debug, {self.value}")
+
+if __name__ == "__main__":
+    app = App(config="config.json")
+    app.option("-d", "--debug", dest="debug", action="store_true", help="debug")
+    app.use(router=Router(
+        test=Router(
+            hello=Router(
+                func=hello,
+                obj=Hello("world"),
+                obj2=Hello_Sync(10),
+            ),
+            hello2=hello,
+            hello3=Router(
+                func=hello_sync,
+                obj=Hello("world"),
+                obj2=Hello_Sync(20),
+            ),
+        )
+    ))
+    app.run()
+```
+
+```shell
+python test.py
+python test.py test.hello.func
+python test.py test.hello.obj --debug
+python test.py --tasks
+python test.py --tree
+python test.py test.hello --tree
+python test.py test.hello.func --view
+```
+
+`--tasks` lists every path. `--tree` prints the tree, and a path limits it to that subtree. `--view` prints each hop while the node runs. Those three read or trace the tree; they do not need a super node.
+
+## How a command runs
+
+An application is a router tree plus one context per run. `use()` replaces the tree. `include()` mounts another tree, optionally under a prefix. A leaf is a function or an object with `run`. A single parameter receives a `Context`. Two parameters keep the `(config, options)` form. An object's `run` method follows the same rule.
+
+`python app.py` starts the process that executes every node. A later command delivers a path into that process. A function, a router, a web service, and a web endpoint are the same kind of step. An object keeps its state across commands, because those commands stay on the worker that first ran it. A second `python app.py` prints `pyouter already running`. `python app.py --worker` joins the pools as another process. A command issued before the first process exists fails and tells you to start it. `--tasks` and `--tree` only read the route tree, so they run in the command itself.
 
 Calling `run()` after you have set `options` executes in the current process. Tests and embedded callers use that path.
 
@@ -163,9 +138,7 @@ After a run, `app.result.exit_code` is 1 when a node fails, and `run()` raises `
 
 Router nodes run their children in parallel. `policy="sequence"` runs them in order. Child failures are collected into `app.result` and the process exits with code 1. `ctx.cancelled` is set when a local web run is stopped.
 
-## local web
-
-https://cursor.com/artifacts/v/art-1cdde7f3-5756-49a3-97ac-2d54dc193da9
+## Local web
 
 Open the current router in a browser. The server binds to `127.0.0.1:8765` and uses only the Python standard library.
 
@@ -175,11 +148,13 @@ python test.py --web --port 9000
 python test.py test.hello --web --no-browser
 ```
 
-`--web` starts the same pyouter process and opens the browser on it. A later `python test.py test.hello.func` routes into that process. The left column is the route tree. The right panel shows the selected node's status, a map of the nearby routes, and the logs captured from that node's standard output and standard error. Click a node to inspect it. Use ▶, double-click, or 执行 to run it. Running a router runs its children, same as the command line.
+`--web` starts the same pyouter process and opens the browser on it. A later `python test.py test.hello.func` routes into that process. The left column is the route tree. The right panel shows the selected node's status, a map of the nearby routes, and the logs captured from that node's standard output and standard error. Click a node to inspect it. Use the play button, or double-click a node, to run it. Running a router runs its children, the same as the command line.
 
-`app.web()` starts the same page from Python. `--host` defaults to localhost; binding another interface exposes task execution on that interface.
+`app.web()` starts the same page from Python. `--host` defaults to localhost. Binding another interface exposes task execution on that interface.
 
-## web services
+The page a node runtime serves on its own port is the map in the picture at the top. That page only shows the runtime. Run and stop stay on this `--web` page.
+
+## Web services
 
 A route is a command (`cli`), a router (`router`), or a web endpoint (`web`). `node_kind` reports which. A Flask or FastAPI application used to sit in the tree as one opaque node, so the routes declared inside it were invisible. Mounting the application flattens each HTTP route into a pyouter node. The command line, `--tasks`, and the local web ui then see those routes.
 
@@ -220,7 +195,7 @@ A path parameter is taken from an option of the same name, from `options.params`
 
 `app.include(service, prefix="api", port=5000)` selects the address. `flatten(service, port=5000)` returns the same router when you want to mount it yourself. A FastAPI application listens on `127.0.0.1:8000` unless you pass a port, and starting it needs `uvicorn`. `GET /users/{user_id}` becomes `users.user_id`.
 
-## containers
+## Containers
 
 A container is a node too. Commands and HTTP services inside it are child nodes, so a path such as `a.b.c.d` reaches through the container `b` into `c` and then `d`. Docker is not required to install pyouter. The `docker` executable is used only when a container node runs.
 
@@ -259,9 +234,11 @@ python app.py a.b.api.health
 
 `python app.py a.b` starts the container and waits. The container's main process is another pyouter, serving the `routes` you passed. `workers=2` starts that many pyouter processes inside the container. `a.b.c.d` is handed to that inner pyouter, which runs `echo deep` on one of those processes. `a.b.api.health` sends `GET /health` to the published address. Both fail, and say to start the container, when `a.b` is not running. Running `a.b` again while it is running reports that and leaves the container in place. Stopping the `a.b` command removes the container it started. The outer pyouter process keeps running.
 
-The image needs Python. pyouter mounts its source and the application script and starts them; you do not write a Dockerfile. `command=("nginx", "-g", "daemon off;")` replaces the inner runtime when the image itself is the service. A nested router such as `c` is only another path segment.
+The image needs Python. pyouter mounts its source and the application script and starts them. You do not write a Dockerfile. `command=("nginx", "-g", "daemon off;")` replaces the inner runtime when the image itself is the service. A nested router such as `c` is only another path segment.
 
-A Compose file is the same kind of node, one level up. Each service in the file is a child. Commands and HTTP routes are added onto a service by name. Mount the project with a prefix; that prefix is what starts the stack. A `.yml` file needs PyYAML. A `.json` Compose file does not.
+## Compose
+
+A Compose file is the same kind of node, one level up. Each service in the file is a child. Commands and HTTP routes are added onto a service by name. Mount the project with a prefix. That prefix is what starts the stack. A `.yml` file needs PyYAML. A `.json` Compose file does not.
 
 ```python
 from pyouter.docker import Command, Compose, Service
@@ -287,9 +264,9 @@ python app.py stack.api.health
 
 `python app.py stack` runs `docker compose up -d` and waits. `stack.web` is the `web` service from the file. `stack.web.ping` is `docker compose exec` inside that service. `stack.api.health` sends one request to the published address. Stopping the `stack` command runs `docker compose down` for the stack it started.
 
-## ssh
+## SSH
 
-An SSH host is a node too. Commands on that host are child nodes, so `a.b.c.d` runs on the host named `b`. The `ssh` program is used only when the host node runs. The connection does not ask for a password; it uses the keys and agent already available to `ssh`.
+An SSH host is a node too. Commands on that host are child nodes, so `a.b.c.d` runs on the host named `b`. The `ssh` program is used only when the host node runs. The connection does not ask for a password. It uses the keys and agent already available to `ssh`.
 
 ```python
 from pyouter.app import App
@@ -326,7 +303,7 @@ python app.py a.b.api.health
 
 Mount the host with a prefix, or place it under a name as `b` is placed above. `forwards` are `ssh -L` values.
 
-## layers
+## Layers
 
 A route tree can nest any of these nodes. Four of them start a new load balancer, so crossing one is a new layer:
 
@@ -364,7 +341,7 @@ app.include(Router(cli=Router(box=edge)))
 
 The provider is an internal detail of the pool. You set `balancer` and `workers`. Replacing the provider is `register_provider(name, start)` and passing that name as `balancer`.
 
-## deploy
+## Deploy
 
 The runtime is the pyouter package. `deploy_tree` installs that package on the machine named by `runtime`, then pushes the layer. A listener that already answers `/health` is left in place. A later push replaces the pool.
 
@@ -372,7 +349,7 @@ The runtime is the pyouter package. `deploy_tree` installs that package on the m
 | --- | --- |
 | `runtime` is on this machine (`127.0.0.1`) | `deploy_tree` starts `python -m pyouter.node` here |
 | an SSH host, or a layer reached through one | the first contact copies the package to `~/.pyouter/runtime` over that host's `ssh` and starts the listener |
-| a container started from this machine | starting the container mounts the package; no Dockerfile is written |
+| a container started from this machine | starting the container mounts the package. No Dockerfile is written |
 | a cluster layer | `deploy_tree` builds an image from this tree, pushes it, and applies one Deployment |
 
 ```python
@@ -381,9 +358,9 @@ jump = SSH("10.0.0.9", routes=..., workers=2, runtime="http://10.0.0.9:7710")
 api = flatten(service, workers=4, runtime="http://10.0.0.9:7711")
 ```
 
-`deploy_tree(app.router)` is the control call. A layer with no `runtime` is not deployed. A remote address that is not an SSH host, and is not reached through one, is refused: there is no path to copy the package there.
+`deploy_tree(app.router)` is the control call. A layer with no `runtime` is not deployed. A remote address that is not an SSH host, and is not reached through one, is refused: there is no path to copy the package there. A direct `http://` runtime does not use `--net`.
 
-A runtime is also a peer. The section below is the full startup, the tree, and the checks.
+A runtime is also a peer. The next section is that network.
 
 | | pyouter | Kubernetes |
 | --- | --- | --- |
@@ -402,15 +379,15 @@ One measured run after a slice was pushed to a node runtime. Four concurrent cal
 
 Four processes finish the same concurrent work in about a quarter of the time. One process runs the calls one after another. The test requires the larger pool to be at least 1.5 times faster.
 
-## peers
+## Peers
 
 A runtime is one peer. Start the super node, start each layer's runtime with that super node's multiaddr, copy the peer id it prints into `runtime`, then call `deploy_tree`. The layer does not store the super node. The control process carries the list.
 
 The control process is a peer too. A peer id is not a credential: anyone can make one. Every process on this network, super nodes included, is started with the same `--net` secret. A process that does not have it is not given a relay slot, and a stream it opens is refused. `deploy_tree` takes that secret as `net`, or reads `PYOUTER_NET`.
 
-`runtime="http://127.0.0.1:7711"` still dials that URL and does not use the list.
+`runtime="http://127.0.0.1:7711"` still dials that URL and does not use the list or the secret.
 
-### start
+### Start
 
 On the machine that other peers can reach, start the super node. `--identity` is the key file. The same file is the same peer id after a restart. The default file is `~/.pyouter/peer/identity`.
 
@@ -420,11 +397,14 @@ python -m pyouter.node --port 7710 --identity ~/.pyouter/peer/sn --sn-listen 127
 
 ```text
 node 7710
+web http://127.0.0.1:7710
 peer 12D3KooWSnA...
 sn /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA...
 ```
 
-`node` is the HTTP port for a direct `runtime`. `peer` is the id you copy into a layer when this process is the one that should receive the slice. `sn` is the multiaddr every other runtime passes to `--sn`.
+`node` is the HTTP port for a direct `runtime`. `web` is the map for this runtime. `peer` is the id you copy into a layer when this process is the one that should receive the slice. `sn` is the multiaddr every other runtime passes to `--sn`.
+
+Open `web` in a browser. The panel tags show the layer, the runtime, the peer id, the super node, and the IP when the node has one. The same reachability tag is on the tree row and on the panel.
 
 Start the runtime for one layer, and point it at that multiaddr:
 
@@ -436,6 +416,7 @@ python -m pyouter.node --port 7711 --identity ~/.pyouter/peer/api \
 
 ```text
 node 7711
+web http://127.0.0.1:7711
 peer 12D3KooWApi...
 joined 12D3KooWSnA...
 ```
@@ -452,6 +433,7 @@ python -m pyouter.node --port 7720 --identity ~/.pyouter/peer/sn-b --sn-listen 1
 
 ```text
 node 7720
+web http://127.0.0.1:7720
 peer 12D3KooWSnB...
 sn /ip4/127.0.0.1/tcp/4002/p2p/12D3KooWSnB...
 joined 12D3KooWSnA...
@@ -477,7 +459,7 @@ The closed address fails. The live one answers. The runtime prints `joined 12D3K
 | `--sn` |  | multiaddr of one super node. Repeat the flag for each one |
 | `--net` | `PYOUTER_NET` | shared secret. Required to join or to serve a super node |
 
-### the tree
+### The tree
 
 Four layers, four runtimes, two super nodes. Each runtime is already up and has printed `joined` for at least one of these super nodes. Copy each `peer` line into `runtime`. The ids below stand in for those lines. `sn` is the same pair of multiaddrs the runtimes joined. It is an argument of `deploy_tree`, not a field on a layer.
 
@@ -530,7 +512,7 @@ sent = deploy_tree(
 )
 ```
 
-`sent` is one record per layer, outer path first. The worker count is the count written on that layer. `port` is the free port that layer's pool bound on its peer. It is not `--port` of `pyouter.node`, and the four pools do not share a port. The numbers below are the shape of that record; a real deploy fills in whichever free ports the pools bound:
+`sent` is one record per layer, outer path first. The worker count is the count written on that layer. `port` is the free port that layer's pool bound on its peer. It is not `--port` of `pyouter.node`, and the four pools do not share a port. The numbers below are the shape of that record. A real deploy fills in whichever free ports the pools bound:
 
 ```python
 [
@@ -549,7 +531,7 @@ Hole punching runs after the super node has opened the stream to the peer. A fai
 
 A peer id with no super node in the call and no `PYOUTER_SN` is refused before a slice is sent. A peer that printed `joined none`, or that joined some other super node, is refused when the control process tries to reach it. The error says the peer has not joined a super node.
 
-### checks
+### Checks
 
 The suite is `src/tests/test_peer.py`. It starts real `python -m pyouter.node` processes, reads the lines they print, and calls `deploy_tree`.
 
@@ -593,11 +575,11 @@ sent = deploy_tree(Router(api=api), sn=[sn_multiaddr], net=os.environ["PYOUTER_N
 # sent[0]["port"] is the free port that peer's pool bound
 ```
 
-`worker_peer_id` and `sn_multiaddr` come from the two processes in [start](#start). `sn_multiaddr` is the `sn` line. `worker_peer_id` is the `peer` line of the runtime that printed `joined` for that super node. The same call with `workers=2` a second time returns a record of the same path, kind, and worker count.
+`worker_peer_id` and `sn_multiaddr` come from the two processes in [Start](#start). `sn_multiaddr` is the `sn` line. `worker_peer_id` is the `peer` line of the runtime that printed `joined` for that super node. The same call with `workers=2` a second time returns a record of the same path, kind, and worker count.
 
-## cluster
+## Cluster
 
-A cloud account does not hand you the Kubernetes nodes. You push an image; the cluster starts the container. That container is one pod, and the pod is one peer. `workers` is the process pool inside the pod. The Deployment's replica count is 1.
+A cloud account does not hand you the Kubernetes nodes. You push an image. The cluster starts the container. That container is one pod, and the pod is one peer. `workers` is the process pool inside the pod. The Deployment's replica count is 1.
 
 ```python
 import os
@@ -637,7 +619,7 @@ sent = deploy_tree(
 
 `registry.example.com/app:1.2` is the name that gets built and pushed. pyouter writes the image from this tree: the pyouter package, the application, and an entrypoint of `python -m pyouter.node`. No Dockerfile is written by hand.
 
-The pod mounts a Secret at `/var/pyouter/identity`. That file is created on the control machine under `~/.pyouter/cluster` and reused, so a restart of the pod is the same peer id. The same Secret holds the network secret, and the container reads it from `PYOUTER_NET`. The container args are `--sn` for each super node passed to this `deploy_tree` call. The layer does not store that list. `imagePullPolicy` is `Always`. The pod template carries a hash of the tree, so a new image rolls out a new pod.
+The pod mounts a Secret at `/var/pyouter/identity`. That file is created on the control machine under `~/.pyouter/cluster` and reused, so a restart of the pod is the same peer id. The same Secret holds the network secret, and the container reads it from `PYOUTER_NET`. The container args are `--sn` for each super node passed to this `deploy_tree` call. The layer does not store that list. `imagePullPolicy` is `Always`. The pod template carries a hash of the tree and of the network secret, so a new image, or a new secret, rolls out a new pod.
 
 `sent` is one record per layer, outer path first. The cluster record and the server inside it come back from that one peer. `port` is the free port that layer's pool bound inside the pod:
 
@@ -744,9 +726,9 @@ PYTHONPATH=src python3 -m unittest src.tests.test_cluster -v
 ### 0.0.8
 
 * add app.option support
-* improve App(config=), support config patth
-* add aysnc support
-* will execute all routers pallarent by using async ThreadPoolExecutor
+* improve App(config=), support config path
+* add async support
+* execute routers in parallel with an async thread pool
 
 ### 0.0.7
 
