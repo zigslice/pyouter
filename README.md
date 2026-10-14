@@ -326,12 +326,13 @@ Mount the host with a prefix, or place it under a name as `b` is placed above. `
 
 ## layers
 
-A route tree can nest any of these nodes. Three of them start a new load balancer, so crossing one is a new layer:
+A route tree can nest any of these nodes. Four of them start a new load balancer, so crossing one is a new layer:
 
 | node | layer | what the parent pool does | what this layer's pool does |
 | --- | --- | --- | --- |
 | container | docker | one worker starts and owns the container | balances every call under the container |
 | SSH host | ssh | one worker opens and owns the connection | balances every call on that host |
+| cluster | cluster | one worker asks the cluster to run the one pod | balances every call inside that pod |
 | web service | server | one worker starts and owns the listener | balances every request the service handles |
 
 A listening server is a layer. It has its own worker pool. The cli process you start is the outermost pool, and it is not a crossing.
@@ -355,8 +356,8 @@ app.include(Router(cli=Router(box=edge)))
 
 | place | parameter | default | effect |
 | --- | --- | --- | --- |
-| container, SSH host, web service | `balancer` | `uvicorn` | which provider starts that layer's pool |
-| container, SSH host, web service | `workers` | `1` | how many processes that pool starts |
+| container, SSH host, cluster, web service | `balancer` | `uvicorn` | which provider starts that layer's pool |
+| container, SSH host, cluster, web service | `workers` | `1` | how many processes that pool starts. On a cluster this is the pool inside the one pod |
 | container, SSH host, web service | `runtime` |  | `http://host:port` for a direct dial, or a peer id reached through the control process's super nodes |
 
 The provider is an internal detail of the pool. You set `balancer` and `workers`. Replacing the provider is `register_provider(name, start)` and passing that name as `balancer`.
@@ -370,6 +371,7 @@ The runtime is the pyouter package. `deploy_tree` installs that package on the m
 | `runtime` is on this machine (`127.0.0.1`) | `deploy_tree` starts `python -m pyouter.node` here |
 | an SSH host, or a layer reached through one | the first contact copies the package to `~/.pyouter/runtime` over that host's `ssh` and starts the listener |
 | a container started from this machine | starting the container mounts the package; no Dockerfile is written |
+| a cluster layer | `deploy_tree` builds an image from this tree, pushes it, and applies one Deployment |
 
 ```python
 edge = Container("python:3.12-slim", routes=..., workers=2, runtime="http://127.0.0.1:7710")
@@ -577,7 +579,81 @@ sent = deploy_tree(Router(api=api), sn=[sn_multiaddr])
 
 `worker_peer_id` and `sn_multiaddr` come from the two processes in [start](#start). `sn_multiaddr` is the `sn` line. `worker_peer_id` is the `peer` line of the runtime that printed `joined` for that super node. The same call with `workers=2` a second time returns a record of the same path, kind, and worker count.
 
+## cluster
+
+A cloud account does not hand you the Kubernetes nodes. You push an image; the cluster starts the container. That container is one pod, and the pod is one peer. `workers` is the process pool inside the pod. The Deployment's replica count is 1.
+
+```python
+from flask import Flask
+
+from pyouter.app import App
+from pyouter.cluster import Cluster
+from pyouter.flatten import flatten
+from pyouter.node import deploy_tree
+from pyouter.router import Router
+
+service = Flask("api")
+
+
+@service.get("/health")
+def health():
+    return {"ok": True}
+
+
+api = flatten(service, workers=4)
+edge = Cluster(
+    "registry.example.com/app:1.2",
+    name="edge",
+    routes=Router(api=api),
+    workers=4,
+)
+
+app = App(config={})
+app.include(Router(cli=Router(box=edge)))
+sent = deploy_tree(
+    app.router,
+    sn=["/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA..."],
+)
+```
+
+`registry.example.com/app:1.2` is the name that gets built and pushed. pyouter writes the image from this tree: the pyouter package, the application, and an entrypoint of `python -m pyouter.node`. No Dockerfile is written by hand.
+
+The pod mounts a Secret at `/var/pyouter/identity`. That file is created on the control machine under `~/.pyouter/cluster` and reused, so a restart of the pod is the same peer id. The container args are `--sn` for each super node passed to this `deploy_tree` call. The layer does not store that list. `imagePullPolicy` is `Always`. The pod template carries a hash of the tree, so a new image rolls out a new pod.
+
+`sent` is one record per layer, outer path first. The cluster record and the server inside it come back from that one peer. `port` is the free port that layer's pool bound inside the pod:
+
+```python
+[
+    {"path": "cli.box", "kind": "cluster", "balancer": "uvicorn", "workers": 4, "port": 52431},
+    {"path": "cli.box.api", "kind": "server", "balancer": "uvicorn", "workers": 4, "port": 53102},
+]
+```
+
+A layer written under the cluster with no `runtime` is pushed to this same peer. A layer that sets `runtime` to an `http://` URL or a peer id is installed on that runtime instead, and is not sent to the pod.
+
+A second `deploy_tree` with the same tree does not build or roll. It pushes the slices again, and the peer replaces each layer's pool. Changing `workers` is that same push: the image stays. Changing the tree, or the image name, builds, pushes, and rolls the Deployment. The new pod joins, then the slices are pushed to it.
+
+A cluster layer with no super node in the call and no `PYOUTER_SN` is refused before an image is built. The error says the cluster needs a super node.
+
+```shell
+PYTHONPATH=src python3 -m unittest src.tests.test_cluster -v
+```
+
+| test | what it does |
+| --- | --- |
+| `test_a_cluster_image_must_name_a_registry` | a bare image name is refused |
+| `test_a_cluster_without_a_super_node_is_refused` | `deploy_tree` with no `sn` raises before `docker` runs |
+| `test_a_cluster_manifest_is_one_pod` | the Deployment has one replica, the identity mount, and `--sn`; `workers` is not a replica count |
+| `test_a_cluster_layer_is_one_pod_and_one_peer` | the slice reaches the peer that joined; a second push and a `workers` change skip the build; a new image name builds again |
+| `test_a_layer_with_its_own_runtime_is_not_sent_to_the_pod` | a child that names `runtime` is pushed there, and the pod receives the cluster slice |
+
 ## What's new
+
+### 0.11.0
+
+* a cluster layer is one pod and one peer; `workers` is the pool inside that pod
+* `deploy_tree` builds an image from the tree, pushes it, and applies one Deployment
+* the pod joins the super nodes passed to that call, and a second push of the same tree does not build again
 
 ### 0.10.0
 

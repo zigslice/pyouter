@@ -197,6 +197,8 @@ def _view_hook(options):
             label = "service"
         elif role == "ssh":
             label = "ssh"
+        elif role == "cluster":
+            label = "cluster"
         elif role == "group":
             label = "web"
         elif role == "action":
@@ -209,7 +211,7 @@ def _view_hook(options):
 
 
 def _cli_error_hook(event):
-    if event.get("role") not in ("action", "serve", "container", "compose", "service", "ssh"):
+    if event.get("role") not in ("action", "serve", "container", "compose", "service", "ssh", "cluster"):
         return
     traceback_text = event.get("traceback")
     if traceback_text:

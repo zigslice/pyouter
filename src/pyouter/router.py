@@ -255,7 +255,7 @@ def node_kind(node):
     router produced by flattening one of those applications.     ``docker`` is a
     container, a Compose service, or a command that runs inside one.
     ``compose`` is a Compose project. ``ssh`` is an SSH host or a command
-    that runs on one.
+    that runs on one. ``cluster`` is one pod started from a registry image.
     """
     if isinstance(node, Router):
         if getattr(node, "origin", None) == "compose":
@@ -266,6 +266,8 @@ def node_kind(node):
             return "docker"
         if getattr(node, "origin", None) == "ssh":
             return "ssh"
+        if getattr(node, "origin", None) == "cluster":
+            return "cluster"
         if getattr(node, "origin", None) == "web":
             return "web"
         return "router"
@@ -324,6 +326,8 @@ async def execute(node, path, depth, ctx):
             return await _execute_container(node, path, depth, ctx)
         if getattr(node, "origin", None) == "ssh":
             return await _execute_ssh(node, path, depth, ctx)
+        if getattr(node, "origin", None) == "cluster":
+            return await _execute_cluster(node, path, depth, ctx)
         if getattr(node, "serves", False):
             return await _execute_service(node, path, depth, ctx)
         if getattr(node, "origin", None) == "web":
@@ -373,6 +377,30 @@ async def _execute_container(node, path, depth, ctx):
             value = await start_container(node, ctx)
         finally:
             reset_path(token)
+    except asyncio.CancelledError:
+        event["result"] = NodeResult(path, "cancelled")
+        await ctx.hooks.emit("after", event)
+        raise
+    except Exception as exc:
+        result = NodeResult(path, "error", error=str(exc), exc_type=type(exc).__name__)
+        event["result"] = result
+        event["traceback"] = traceback.format_exc().rstrip()
+        await ctx.hooks.emit("on_error", event)
+        await ctx.hooks.emit("after", event)
+        return result
+    result = NodeResult(path, "success", value=value)
+    event["result"] = result
+    await ctx.hooks.emit("after", event)
+    return result
+
+
+async def _execute_cluster(node, path, depth, ctx):
+    from .cluster import publish
+
+    event = _event(node, path, depth, "cluster")
+    await ctx.hooks.emit("before", event)
+    try:
+        value = await asyncio.to_thread(publish, node, path, None)
     except asyncio.CancelledError:
         event["result"] = NodeResult(path, "cancelled")
         await ctx.hooks.emit("after", event)
