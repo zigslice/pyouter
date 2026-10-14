@@ -357,7 +357,7 @@ app.include(Router(cli=Router(box=edge)))
 | --- | --- | --- | --- |
 | container, SSH host, web service | `balancer` | `uvicorn` | which provider starts that layer's pool |
 | container, SSH host, web service | `workers` | `1` | how many processes that pool starts |
-| container, SSH host, web service | `runtime` |  | `http://host:port` of the listener that serves this layer |
+| container, SSH host, web service | `runtime` |  | `http://host:port` for a direct dial, or a peer id reached through the control process's super nodes |
 
 The provider is an internal detail of the pool. You set `balancer` and `workers`. Replacing the provider is `register_provider(name, start)` and passing that name as `balancer`.
 
@@ -379,6 +379,17 @@ api = flatten(service, workers=4, runtime="http://10.0.0.9:7711")
 
 `deploy_tree(app.router)` is the control call. A layer with no `runtime` is not deployed. A remote address that is not an SSH host, and is not reached through one, is refused: there is no path to copy the package there.
 
+A runtime is also a peer. `runtime` is either a direct `http://host:port` or a peer id. The peer id is not a second address of the layer's super node: the control process joins the super nodes it was given and delivers the slice from there.
+
+```bash
+python -m pyouter.node --sn-listen 0.0.0.0:4001
+python -m pyouter.node --port 7710 --sn /ip4/1.2.3.4/tcp/4001/p2p/<SN peer id>
+```
+
+`--sn` can be repeated. The runtime connects to every super node in that list that answers. A layer does not carry the list. `deploy_tree(router, sn=[...])` is the control process's list, and `PYOUTER_SN` is the same list when the argument is omitted. A peer that has not joined one of those super nodes is not given the slice. Hole punching runs after the super node has already opened the stream; a failed punch still leaves the slice on that stream.
+
+Several super nodes are several entries in this list. They do not elect a leader and they do not store the tree. To let them see each other, give each one the other's multiaddr with `--sn`.
+
 | | pyouter | Kubernetes |
 | --- | --- | --- |
 | what is placed | one layer of the tree | a pod |
@@ -397,6 +408,12 @@ One measured run after a slice was pushed to a node runtime. Four concurrent cal
 Four processes finish the same concurrent work in about a quarter of the time. One process runs the calls one after another. The test requires the larger pool to be at least 1.5 times faster.
 
 ## What's new
+
+### 0.10.0
+
+* a runtime is a peer; `runtime` may be a peer id as well as `http://host:port`
+* `--sn-listen` makes that runtime a super node, and `--sn` joins every reachable super node in the list
+* `deploy_tree` delivers a peer-id layer through the control process's super nodes
 
 ### 0.9.0
 

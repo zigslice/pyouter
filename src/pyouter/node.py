@@ -143,19 +143,54 @@ class _Handler(BaseHTTPRequestHandler):
             threading.Thread(target=server.shutdown, daemon=True).start()
 
 
-def serve(port=0, host="127.0.0.1"):
-    """Listen for a slice and serve it. Return the bound port."""
-    global _httpd
+def serve(port=0, host="127.0.0.1", identity=None, sn=(), sn_listen=None):
+    """Listen for a slice and serve it. Return the bound port.
+
+    ``sn`` is the list of super-node multiaddrs this runtime joins.
+    ``sn_listen`` is ``(host, port)`` when this runtime is itself a super node.
+    """
+    global _httpd, _node_peer
     server = ThreadingHTTPServer((host, int(port)), _Handler)
     _httpd = server
     bound = server.server_address[1]
     print(f"node {bound}", flush=True)
+    peer = None
+    if sn or sn_listen is not None:
+        from .peer import PeerNode
+
+        identity_path = identity or str(Path.home() / ".pyouter" / "peer" / "identity")
+        peer = PeerNode(
+            identity_path,
+            sn=list(sn),
+            sn_listen=sn_listen,
+            handler=_node_handler,
+        ).start()
+        _node_peer = peer
+        print(f"peer {peer.peer_id}", flush=True)
+        if sn_listen is not None:
+            print(f"sn {peer.listen_addr}", flush=True)
+        for item in peer.joined:
+            print(f"joined {item}", flush=True)
+        if sn and not peer.joined:
+            print("joined none", flush=True)
     try:
         server.serve_forever()
     finally:
+        if peer is not None:
+            peer.close()
+        _node_peer = None
         _service.close()
         server.server_close()
     return bound
+
+
+def _node_handler(message):
+    from .peer import _dispatch
+
+    return _dispatch(_service, message)
+
+
+_node_peer = None
 
 
 def push(url, layer):
@@ -188,14 +223,24 @@ def ensure(node, router=None, path=None):
     )
 
 
-def deploy_tree(router):
-    """Install each layer's runtime, then push that layer's slice."""
+def deploy_tree(router, sn=None):
+    """Install each layer's runtime, then push that layer's slice.
+
+    ``sn`` is the control process's super-node list. A layer whose
+    ``runtime`` is a peer id is reached through that list. The list is not
+    stored on the layer.
+    """
+    from .peer import is_peer_id, push_peer
+
     sent = []
     for layer in layers_of(router):
         target = _at(router, layer.path)
         url = getattr(target, "runtime", None)
         if not isinstance(url, str) or url == "":
             raise ValueError(f"{layer.path} has no runtime")
+        if is_peer_id(url):
+            sent.append(push_peer(url, layer, sn))
+            continue
         ensure(target, router=router, path=layer.path)
         sent.append(push(url, layer))
     return sent
@@ -429,8 +474,26 @@ def _main(argv):
     parser = argparse.ArgumentParser(prog="pyouter.node")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7710)
+    parser.add_argument("--identity", default=None)
+    parser.add_argument("--sn", action="append", default=[])
+    parser.add_argument("--sn-listen", default=None)
     args = parser.parse_args(argv)
-    serve(args.port, host=args.host)
+    serve(
+        args.port,
+        host=args.host,
+        identity=args.identity,
+        sn=args.sn,
+        sn_listen=_sn_listen(args.sn_listen),
+    )
+
+
+def _sn_listen(value):
+    if value is None:
+        return None
+    host, sep, port = str(value).rpartition(":")
+    if sep != ":" or not host or not port.isdigit():
+        raise ValueError("--sn-listen must look like 0.0.0.0:4001")
+    return host, int(port)
 
 
 if __name__ == "__main__":
