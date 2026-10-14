@@ -77,7 +77,7 @@ PAGE = r"""<!DOCTYPE html>
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: 320px minmax(0, 1fr);
+    grid-template-columns: 400px minmax(0, 1fr);
   }
   aside {
     min-height: 0;
@@ -120,7 +120,7 @@ PAGE = r"""<!DOCTYPE html>
   .tree { flex: 1; min-height: 0; overflow: auto; padding: 0 8px 12px; }
   .tree-row {
     display: grid;
-    grid-template-columns: 16px 8px minmax(0, 1fr) auto auto;
+    grid-template-columns: 16px 8px minmax(0, 1fr) auto auto auto;
     align-items: center;
     gap: 6px;
     width: 100%;
@@ -134,6 +134,19 @@ PAGE = r"""<!DOCTYPE html>
   }
   .tree-row:hover { background: #f3f1ee; }
   .tree-row.selected { background: #f8ead6; box-shadow: inset 2px 0 0 var(--icon); }
+  .tree-row.layer-docker { background: #e7f0fb; }
+  .tree-row.layer-ssh { background: #f3e9fb; }
+  .tree-row.layer-cluster { background: #e5f6f3; }
+  .tree-row.layer-server { background: #fff0e6; }
+  .tree-row.layer-docker.selected { background: #d4e4f8; }
+  .tree-row.layer-ssh.selected { background: #e7d8f8; }
+  .tree-row.layer-cluster.selected { background: #d2efe9; }
+  .tree-row.layer-server.selected { background: #ffe1cc; }
+  .tree-row.here { box-shadow: inset 3px 0 0 #1d4ed8; }
+  .tree-row.layer-docker.here { box-shadow: inset 3px 0 0 #1d4ed8; }
+  .tree-row.layer-ssh.here { box-shadow: inset 3px 0 0 #6d28d9; }
+  .tree-row.layer-cluster.here { box-shadow: inset 3px 0 0 #0f766e; }
+  .tree-row.layer-server.here { box-shadow: inset 3px 0 0 #c2410c; }
   .twist, .run-mini {
     border: 0;
     background: transparent;
@@ -201,7 +214,7 @@ PAGE = r"""<!DOCTYPE html>
   }
   .crumbs button:hover, .crumbs button.current { color: var(--text); }
   .crumbs span { color: var(--faint); }
-  .title-row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+  .title-row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
   .title-row h1 {
     margin: 0;
     font-family: var(--serif);
@@ -209,19 +222,29 @@ PAGE = r"""<!DOCTYPE html>
     font-weight: 600;
     letter-spacing: -0.03em;
   }
-  .badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-start; flex: 1 1 100%; }
   .pill {
     border-radius: 999px;
     padding: 3px 8px;
     font-size: 12px;
     background: #f3f2f0;
     color: var(--muted);
+    overflow-wrap: anywhere;
   }
   .pill.running { color: #9a5b16; background: #f8ead6; }
   .pill.pending { color: #9a5b16; background: #f8ead6; }
   .pill.success { color: var(--ok); background: #e8f6ec; }
   .pill.error { color: var(--err); background: #fdecec; }
   .pill.cancelled { color: var(--muted); background: #f3f2f0; }
+  .pill.here { color: #1d4ed8; background: #dbeafe; font-weight: 700; }
+  .pill.up { color: #2f9e44; background: #e8f6ec; }
+  .pill.down { color: #d64545; background: #fdecec; }
+  .pill.layer-docker { color: #1d4ed8; background: #dbeafe; }
+  .pill.layer-ssh { color: #6d28d9; background: #ede9fe; }
+  .pill.layer-cluster { color: #0f766e; background: #ccfbf1; }
+  .pill.layer-server { color: #c2410c; background: #ffedd5; }
+  .tree-tags { display: flex; gap: 4px; align-items: center; min-width: 0; }
+  .tree-tags .pill { padding: 1px 6px; font-size: 11px; }
   .signature, .path-code, .doc {
     font-family: var(--mono);
     font-size: 12px;
@@ -280,6 +303,11 @@ PAGE = r"""<!DOCTYPE html>
     background: var(--bg-raised);
   }
   .card.selected { background: #fff8ef; border-color: #f3d2a8; box-shadow: none; }
+  .card.layer-docker { background: #e7f0fb; border-color: #bfdbfe; }
+  .card.layer-ssh { background: #f3e9fb; border-color: #e9d5ff; }
+  .card.layer-cluster { background: #e5f6f3; border-color: #99f6e4; }
+  .card.layer-server { background: #fff0e6; border-color: #fed7aa; }
+  .card.here { box-shadow: inset 3px 0 0 #1d4ed8; }
   .card-top { display: flex; align-items: center; gap: 8px; }
   .card-name {
     border: 0;
@@ -355,7 +383,7 @@ PAGE = r"""<!DOCTYPE html>
         <path d="M6 9v3h12V9M12 12v3" stroke="currentColor" fill="none"></path>
       </svg>
       <strong>pyouter</strong>
-      <em>本机</em>
+      <em id="where">本机</em>
     </div>
     <div class="header-meta">
       <span id="endpoint"></span>
@@ -376,7 +404,7 @@ PAGE = r"""<!DOCTYPE html>
       </div>
       <div id="counts" class="aside-foot" style="border: 0; padding-bottom: 6px;"></div>
       <div id="tree" class="tree" role="tree"></div>
-      <div class="aside-foot">单击查看，双击或 ▶ 执行</div>
+      <div class="aside-foot" id="hint">单击查看，双击或 ▶ 执行</div>
     </aside>
     <main>
       <div id="main"></div>
@@ -394,6 +422,8 @@ function httpLabel(node) {
 }
 function kindText(node) {
   if (!node) return "";
+  const layer = layerKind(node);
+  if (layer) return LAYER_LABEL[layer];
   const http = httpLabel(node);
   if (http) return http;
   if (node.route_type === "web" && node.kind === "router") return "服务";
@@ -405,6 +435,8 @@ function kindText(node) {
 }
 function kindName(node) {
   if (!node) return "";
+  const layer = layerKind(node);
+  if (layer) return LAYER_LABEL[layer];
   if (node.kind === "web") return KIND_LABEL.web;
   if (node.kind === "docker") return KIND_LABEL.docker;
   if (node.kind === "ssh") return KIND_LABEL.ssh;
@@ -415,7 +447,45 @@ function kindName(node) {
   if (node.route_type === "cluster" && node.kind === "router") return "集群";
   return KIND_LABEL[node.kind] || node.kind || "";
 }
-const state = {tree: null, nodes: {}, selected: "", seq: 0, filter: "", expanded: new Set(), script: BOOT.script || "pyouter"};
+const LAYER_LABEL = {docker: "容器", ssh: "主机", cluster: "集群", server: "服务"};
+const state = {tree: null, nodes: {}, selected: "", seq: 0, filter: "", expanded: new Set(), script: BOOT.script || "pyouter", mode: BOOT.mode || "app", here: ""};
+function layerKind(node) {
+  if (!node) return "";
+  if (node.layer && LAYER_LABEL[node.layer]) return node.layer;
+  return "";
+}
+function runtimeMode() { return state.mode === "runtime"; }
+function tag(className, text, title) {
+  return h("span", {class: "pill " + className, text: text, title: title || text});
+}
+function reachTag(node, compact) {
+  if (!node || (node.reach !== "up" && node.reach !== "down")) return null;
+  const up = node.reach === "up";
+  return tag(up ? "up" : "down", up ? "可达" : "不可达", up ? "可达" : "不可达");
+}
+function treeTags(node) {
+  const tags = [];
+  if (node.here) tags.push(tag("here", "你在这里"));
+  const reach = reachTag(node);
+  if (reach) tags.push(reach);
+  return h("span", {class: "tree-tags"}, tags);
+}
+function detailTags(node) {
+  const tags = [];
+  if (node.here) tags.push(tag("here", "你在这里"));
+  const kind = layerKind(node);
+  if (kind) tags.push(tag("layer-" + kind, LAYER_LABEL[kind]));
+  const reach = reachTag(node);
+  if (reach) tags.push(reach);
+  if (node.runtime && node.runtime !== node.peer_id) tags.push(tag("", "runtime " + node.runtime, node.runtime));
+  if (node.peer_id) tags.push(tag("", "peer " + node.peer_id, node.peer_id));
+  (node.sn || []).forEach((item) => tags.push(tag("", "sn " + item, item)));
+  if (node.ip) {
+    const address = node.host_port ? node.ip + ":" + node.host_port : node.ip;
+    tags.push(tag("", "IP " + address, address));
+  }
+  return tags;
+}
 
 function h(tag, props, kids) {
   const node = document.createElement(tag);
@@ -560,14 +630,24 @@ function renderTreeNode(node, depth, filter) {
   if (filter && !showAll && !kids.length) return [];
   const open = filter ? true : state.expanded.has(node.path);
   const status = nodeState(node.path).status;
+  const kind = layerKind(node);
+  const rowClass = [
+    "tree-row",
+    state.selected === node.path ? "selected" : "",
+    kind ? "layer-" + kind : "",
+    node.here ? "here" : "",
+    node.reach === "up" ? "reach-up" : "",
+    node.reach === "down" ? "reach-down" : "",
+  ].filter(Boolean).join(" ");
   const row = h("div", {
-    class: "tree-row" + (state.selected === node.path ? " selected" : ""),
+    class: rowClass,
     role: "treeitem",
     "data-path": node.path,
     "aria-selected": state.selected === node.path ? "true" : "false",
     title: (node.path || "(root)") + (httpLabel(node) ? " · " + httpLabel(node) : "") + " · 单击查看，双击执行",
     onclick: () => select(node.path),
     ondblclick: (event) => {
+      if (runtimeMode()) return;
       if (event.target.closest && event.target.closest("button")) return;
       event.preventDefault();
       select(node.path);
@@ -589,8 +669,9 @@ function renderTreeNode(node, depth, filter) {
     }),
     h("span", {class: "dot", "data-status": status}),
     h("span", {class: "tree-name", text: node.name || "(root)"}),
+    treeTags(node),
     h("span", {class: "tree-kind", text: kindText(node)}),
-    h("button", {
+    runtimeMode() ? null : h("button", {
       class: "run-mini",
       type: "button",
       title: "执行 " + (node.path || "(root)"),
@@ -660,11 +741,20 @@ function select(path) {
 }
 function renderCard(node, depth) {
   const info = nodeState(node.path);
-  const card = h("div", {class: "card" + (node.path === state.selected ? " selected" : "")}, [
+  const kind = layerKind(node);
+  const cardClass = [
+    "card",
+    node.path === state.selected ? "selected" : "",
+    kind ? "layer-" + kind : "",
+    node.here ? "here" : "",
+  ].filter(Boolean).join(" ");
+  const card = h("div", {class: cardClass}, [
     h("div", {class: "card-top"}, [
       h("button", {class: "card-name", type: "button", onclick: () => select(node.path), text: node.name || "(root)"}),
       h("span", {class: "pill " + (info.status || "idle"), text: STATUS_LABEL[info.status] || info.status}),
-      h("button", {
+      node.here ? tag("here", "你在这里") : null,
+      reachTag(node),
+      runtimeMode() ? null : h("button", {
         class: "run-mini",
         type: "button",
         title: "执行",
@@ -726,11 +816,13 @@ function renderMain(fromSelect) {
   });
   const owner = activeOwner(node.path);
   const actions = h("div", {class: "actions"});
-  if (owner === null) {
-    actions.append(h("button", {class: "primary", type: "button", onclick: () => run(node.path), text: "执行"}));
-  } else {
-    actions.append(h("button", {class: "danger", type: "button", onclick: () => stop(node.path), text: "停止"}));
-    actions.append(h("span", {class: "signature", text: owner === node.path ? "此节点正在执行" : "相关节点正在执行：" + (owner || "(root)")}));
+  if (!runtimeMode()) {
+    if (owner === null) {
+      actions.append(h("button", {class: "primary", type: "button", onclick: () => run(node.path), text: "执行"}));
+    } else {
+      actions.append(h("button", {class: "danger", type: "button", onclick: () => stop(node.path), text: "停止"}));
+      actions.append(h("span", {class: "signature", text: owner === node.path ? "此节点正在执行" : "相关节点正在执行：" + (owner || "(root)")}));
+    }
   }
   const command = commandFor(node.path);
   const stats = childStats(node.path);
@@ -754,7 +846,7 @@ function renderMain(fromSelect) {
       h("div", {class: "badges"}, [
         h("span", {class: "pill", text: kindName(node) || node.type}),
         h("span", {class: "pill " + status, text: STATUS_LABEL[status] || status}),
-      ]),
+      ].concat(detailTags(node))),
     ]),
     h("div", {class: "path-code", text: node.path || "(root)"}),
     node.signature || node.target ? h("div", {class: "signature", text: (node.target || "") + (node.signature || "")}) : null,
@@ -764,8 +856,8 @@ function renderMain(fromSelect) {
       h("span", {class: "signature", text: statBits.length ? "子节点 " + statBits.join(" · ") : (node.type === "router" ? "还没有子节点执行记录" : "")}),
     ]),
     info.error ? h("div", {class: "error-banner", role: "alert", text: info.error}) : null,
-    actions,
-    h("div", {class: "command"}, [
+    runtimeMode() ? null : actions,
+    runtimeMode() ? null : h("div", {class: "command"}, [
       h("code", {class: "path-code", text: command}),
       h("button", {class: "ghost", type: "button", onclick: () => copyText(command), text: "复制命令"}),
     ]),
@@ -778,7 +870,7 @@ function renderMain(fromSelect) {
   const logs = info.logs || [];
   const logBox = h("div", {class: "log", "data-log": "1"});
   if (!logs.length) {
-    logBox.append(h("div", {class: "empty", text: "还没有日志。执行此节点后，标准输出和标准错误会显示在这里。"}));
+    logBox.append(h("div", {class: "empty", text: runtimeMode() ? "这个节点正在提供服务。绿色标签是可达，红色标签是不可达。" : "还没有日志。执行此节点后，标准输出和标准错误会显示在这里。"}));
   } else {
     logs.forEach((line) => {
       logBox.append(h("div", {class: "log-line " + (line.stream || "stdout")}, [
@@ -847,16 +939,25 @@ async function poll() {
   }
   setTimeout(poll, 400);
 }
+function applySnap(snap) {
+  state.tree = snap.tree;
+  state.mode = snap.mode || state.mode;
+  state.here = snap.here || "";
+  const where = document.getElementById("where");
+  if (where) where.textContent = runtimeMode() ? "你在这里" : "本机";
+  const hint = document.getElementById("hint");
+  if (hint) hint.textContent = runtimeMode() ? "单击查看这个节点" : "单击查看，双击或 ▶ 执行";
+}
 async function boot() {
   const snap = await (await fetch("/api/snapshot")).json();
-  state.tree = snap.tree;
+  applySnap(snap);
   state.nodes = snap.nodes || {};
   state.seq = snap.seq || 0;
   state.script = snap.script || state.script;
   expandAll(state.tree);
   updateCounts();
   renderTree();
-  const focus = BOOT.focus || snap.focus || "";
+  const focus = snap.here || BOOT.focus || snap.focus || "";
   if (focus && !findNode(state.tree, focus)) {
     toast("未找到路径 " + focus);
     select("");
@@ -865,6 +966,19 @@ async function boot() {
   }
   updateChrome();
   poll();
+  setInterval(refreshMap, 3000);
+}
+async function refreshMap() {
+  try {
+    const snap = await (await fetch("/api/snapshot")).json();
+    const previous = state.here;
+    applySnap(snap);
+    renderTree();
+    if (snap.here && snap.here !== previous) select(snap.here);
+    else renderMain(false);
+  } catch (error) {
+    /* the next poll will try again */
+  }
 }
 document.getElementById("search").addEventListener("input", (event) => {
   state.filter = event.target.value;

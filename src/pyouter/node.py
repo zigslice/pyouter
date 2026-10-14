@@ -97,14 +97,53 @@ class _Service:
 
 _service = _Service()
 _httpd = None
+_listen = {"ip": "", "port": None}
 
 
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.split("?", 1)[0] != "/health":
-            self._send(404, {"error": "not found"})
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(self.path)
+        if parsed.path == "/health":
+            self._send(200, _service.health())
             return
-        self._send(200, _service.health())
+        if parsed.path == "/":
+            self._page()
+            return
+        if parsed.path == "/favicon.ico":
+            self._raw(204, b"", "image/x-icon")
+            return
+        if parsed.path == "/api/snapshot":
+            self._send(200, _snapshot())
+            return
+        if parsed.path == "/api/events":
+            query = parse_qs(parsed.query)
+            raw = query.get("since", ["0"])[0]
+            if not raw.lstrip("-").isdigit():
+                self._send(400, {"ok": False, "error": "since 必须是整数"})
+                return
+            self._send(200, {"seq": 0, "events": [], "gap": False})
+            return
+        self._send(404, {"error": "not found"})
+
+    def _page(self):
+        from .web_page import render_page
+
+        snap = _snapshot()
+        body = render_page(
+            {"focus": snap["here"], "script": "pyouter.node", "mode": "runtime"}
+        ).encode("utf-8")
+        self._raw(200, body, "text/html; charset=utf-8")
+
+    def _raw(self, status, body, content_type):
+        self.send_response(status)
+        self.send_header("content-type", content_type)
+        self.send_header("content-length", str(len(body)))
+        self.send_header("cache-control", "no-store")
+        self.end_headers()
+        if body:
+            self.wfile.write(body)
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
@@ -119,6 +158,9 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/shutdown":
                 self._send(200, {"ok": True})
                 self._stop()
+                return
+            if path == "/api/run" or path == "/api/stop":
+                self._send(409, {"ok": False, "error": "这个页面只展示这个节点"})
                 return
             self._send(404, {"error": "not found"})
         except ValueError as exc:
@@ -167,7 +209,15 @@ def serve(port=0, host="127.0.0.1", identity=None, sn=(), sn_listen=None):
     server = ThreadingHTTPServer((host, int(port)), _Handler)
     _httpd = server
     bound = server.server_address[1]
+    from .mapview import display_ip
+
+    _listen["ip"] = display_ip(host)
+    _listen["port"] = bound
     print(f"node {bound}", flush=True)
+    shown = _listen["ip"]
+    if ":" in shown and not shown.startswith("["):
+        shown = f"[{shown}]"
+    print(f"web http://{shown}:{bound}", flush=True)
     peer = None
     if sn or sn_listen is not None:
         from .peer import PeerNode
@@ -196,6 +246,43 @@ def serve(port=0, host="127.0.0.1", identity=None, sn=(), sn_listen=None):
         _service.close()
         server.server_close()
     return bound
+
+
+def _snapshot():
+    from .mapview import tree_from_runtime
+
+    with _service.lock:
+        specs = [dict(_service.specs[key]) for key in sorted(_service.specs)]
+    peer_id = ""
+    sn = []
+    if _node_peer is not None:
+        peer_id = _node_peer.peer_id or ""
+        sn = list(_node_peer.joined)
+    tree, here = tree_from_runtime(
+        specs,
+        {
+            "ip": _listen.get("ip") or "",
+            "port": _listen.get("port"),
+            "peer_id": peer_id,
+            "sn": sn,
+        },
+    )
+    return {
+        "tree": tree,
+        "nodes": {},
+        "seq": 0,
+        "focus": here,
+        "here": here,
+        "mode": "runtime",
+        "script": "pyouter.node",
+        "self": {
+            "ip": _listen.get("ip") or "",
+            "port": _listen.get("port"),
+            "peer_id": peer_id,
+            "sn": sn,
+            "reach": "up",
+        },
+    }
 
 
 def _node_handler(message):

@@ -6,6 +6,8 @@ Deepwki: https://deepwiki.com/fanfeilong/pyouter
 
 ![pyouter](pyouter.gif)
 
+节点 runtime 启动后会打印 `web http://<ip>:<port>`。用浏览器打开这个地址就是上面这张地图：层有自己的颜色，当前这台机器上的层标着「你在这里」，绿色是可达，红色是不可达。
+
 ## INSTALL
 
 install pyouter
