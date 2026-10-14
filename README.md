@@ -379,16 +379,7 @@ api = flatten(service, workers=4, runtime="http://10.0.0.9:7711")
 
 `deploy_tree(app.router)` is the control call. A layer with no `runtime` is not deployed. A remote address that is not an SSH host, and is not reached through one, is refused: there is no path to copy the package there.
 
-A runtime is also a peer. `runtime` is either a direct `http://host:port` or a peer id. The peer id is not a second address of the layer's super node: the control process joins the super nodes it was given and delivers the slice from there.
-
-```bash
-python -m pyouter.node --sn-listen 0.0.0.0:4001
-python -m pyouter.node --port 7710 --sn /ip4/1.2.3.4/tcp/4001/p2p/<SN peer id>
-```
-
-`--sn` can be repeated. The runtime connects to every super node in that list that answers. A layer does not carry the list. `deploy_tree(router, sn=[...])` is the control process's list, and `PYOUTER_SN` is the same list when the argument is omitted. A peer that has not joined one of those super nodes is not given the slice. Hole punching runs after the super node has already opened the stream; a failed punch still leaves the slice on that stream.
-
-Several super nodes are several entries in this list. They do not elect a leader and they do not store the tree. To let them see each other, give each one the other's multiaddr with `--sn`.
+A runtime is also a peer. The section below is the full startup, the tree, and the checks.
 
 | | pyouter | Kubernetes |
 | --- | --- | --- |
@@ -406,6 +397,185 @@ One measured run after a slice was pushed to a node runtime. Four concurrent cal
 | 4 | 4 | 0.3s | 0.305s | 4 | 3.95 |
 
 Four processes finish the same concurrent work in about a quarter of the time. One process runs the calls one after another. The test requires the larger pool to be at least 1.5 times faster.
+
+## peers
+
+A runtime is one peer. Start the super node, start each layer's runtime with that super node's multiaddr, copy the peer id it prints into `runtime`, then call `deploy_tree`. The layer does not store the super node. The control process carries the list.
+
+`runtime="http://127.0.0.1:7711"` still dials that URL and does not use the list.
+
+### start
+
+On the machine that other peers can reach, start the super node. `--identity` is the key file. The same file is the same peer id after a restart. The default file is `~/.pyouter/peer/identity`.
+
+```bash
+python -m pyouter.node --port 7710 --identity ~/.pyouter/peer/sn --sn-listen 127.0.0.1:4001
+```
+
+```text
+node 7710
+peer 12D3KooWSnA...
+sn /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA...
+```
+
+`node` is the HTTP port for a direct `runtime`. `peer` is the id you copy into a layer when this process is the one that should receive the slice. `sn` is the multiaddr every other runtime passes to `--sn`.
+
+Start the runtime for one layer, and point it at that multiaddr:
+
+```bash
+python -m pyouter.node --port 7711 --identity ~/.pyouter/peer/api \
+  --sn /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA...
+```
+
+```text
+node 7711
+peer 12D3KooWApi...
+joined 12D3KooWSnA...
+```
+
+`joined` is the super node this runtime reserved on. `joined none` means every `--sn` failed. A later deploy to this peer id does not deliver the slice.
+
+A second super node is another process. A runtime connects to every entry that answers:
+
+```bash
+python -m pyouter.node --port 7720 --identity ~/.pyouter/peer/sn-b --sn-listen 127.0.0.1:4002 \
+  --sn /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA...
+```
+
+```text
+node 7720
+peer 12D3KooWSnB...
+sn /ip4/127.0.0.1/tcp/4002/p2p/12D3KooWSnB...
+joined 12D3KooWSnA...
+```
+
+The second super node is given the first super node's multiaddr, so the two see each other. They do not elect a leader and they do not store the tree. A worker then receives both:
+
+```bash
+python -m pyouter.node --port 7711 --identity ~/.pyouter/peer/api \
+  --sn /ip4/127.0.0.1/tcp/1/p2p/12D3KooWClosed... \
+  --sn /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA...
+```
+
+The closed address fails. The live one answers. The runtime prints `joined 12D3KooWSnA...` and no line for the closed address.
+
+| flag | default | effect |
+| --- | --- | --- |
+| `--port` | `7710` | HTTP port for a direct `runtime` URL. `0` picks a free port |
+| `--host` | `127.0.0.1` | HTTP bind address |
+| `--identity` | `~/.pyouter/peer/identity` | key file for this peer id |
+| `--sn-listen` |  | `host:port` that makes this process a super node |
+| `--sn` |  | multiaddr of one super node. Repeat the flag for each one |
+
+### the tree
+
+Four layers, four runtimes, two super nodes. Each runtime is already up and has printed `joined` for at least one of these super nodes. Copy each `peer` line into `runtime`. The ids below stand in for those lines. `sn` is the same pair of multiaddrs the runtimes joined. It is an argument of `deploy_tree`, not a field on a layer.
+
+```python
+from flask import Flask
+
+from pyouter.app import App
+from pyouter.docker import Container
+from pyouter.flatten import flatten
+from pyouter.node import deploy_tree
+from pyouter.router import Router
+from pyouter.ssh import SSH
+
+service = Flask("api")
+
+
+@service.get("/health")
+def health():
+    return {"ok": True}
+
+
+api = flatten(service, workers=4, runtime="12D3KooWApi...")
+inner = Container(
+    "python:3.12-slim",
+    name="inner",
+    routes=Router(api=api),
+    workers=3,
+    runtime="12D3KooWInner...",
+)
+jump = SSH("10.0.0.9", routes=Router(box=inner), workers=2, runtime="12D3KooWJump...")
+edge = Container(
+    "python:3.12-slim",
+    name="edge",
+    routes=Router(host=jump),
+    workers=2,
+    runtime="12D3KooWEdge...",
+)
+
+app = App(config={})
+app.include(Router(cli=Router(box=edge)))
+sent = deploy_tree(
+    app.router,
+    sn=[
+        "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWSnA...",
+        "/ip4/127.0.0.1/tcp/4002/p2p/12D3KooWSnB...",
+    ],
+)
+```
+
+`sent` is one record per layer, outer path first. The worker count is the count written on that layer. `port` is the free port that layer's pool bound on its peer. It is not `--port` of `pyouter.node`, and the four pools do not share a port. The numbers below are the shape of that record; a real deploy fills in whichever free ports the pools bound:
+
+```python
+[
+    {"path": "cli.box", "kind": "docker", "balancer": "uvicorn", "workers": 2, "port": 52431},
+    {"path": "cli.box.host", "kind": "ssh", "balancer": "uvicorn", "workers": 2, "port": 53102},
+    {"path": "cli.box.host.box", "kind": "docker", "balancer": "uvicorn", "workers": 3, "port": 54880},
+    {"path": "cli.box.host.box.api", "kind": "server", "balancer": "uvicorn", "workers": 4, "port": 55114},
+]
+```
+
+A second `deploy_tree` with the same list replaces the pool on the same peer. The new record carries the port the replacement pool bound.
+
+Leave `sn` out and the control process reads `PYOUTER_SN`, a comma-separated list of the same multiaddrs. `PYOUTER_PEER_IDENTITY` is the control peer's key file. Unset, that file is `~/.pyouter/peer/identity`.
+
+Hole punching runs after the super node has opened the stream to the peer. A failed punch still leaves the slice on that stream.
+
+A peer id with no super node in the call and no `PYOUTER_SN` is refused before a slice is sent. A peer that printed `joined none`, or that joined some other super node, is refused when the control process tries to reach it. The error says the peer has not joined a super node.
+
+### checks
+
+The suite is `src/tests/test_peer.py`. It starts real `python -m pyouter.node` processes, reads the lines they print, and calls `deploy_tree`.
+
+```shell
+PYTHONPATH=src python3 -m unittest src.tests.test_peer -v
+```
+
+| test | what it does |
+| --- | --- |
+| `test_a_peer_id_stays_the_same_across_reads` | two reads of one identity file return the same id; a second file returns another |
+| `test_a_peer_id_without_a_super_node_is_refused` | `deploy_tree` with a peer id and no `sn` raises before a slice is sent |
+| `test_a_slice_reaches_a_peer_that_joined_the_super_node` | a worker that printed `joined` receives the slice, and a second push delivers to the same peer |
+| `test_a_peer_that_has_not_joined_is_not_given_the_slice` | `--sn` pointed at a closed port prints `joined none`; deploy raises `has not joined` |
+| `test_a_peer_joins_the_super_node_that_answers` | one closed multiaddr and one live super node; the worker joins the live one and receives the slice |
+
+The slice in those tests is one server layer:
+
+```python
+from pyouter.node import deploy_tree
+from pyouter.router import Router
+
+def health(ctx):
+    return None
+
+api = Router(health=health)
+api.serves = True
+api.layer = "server"
+api.balancer = "uvicorn"
+api.workers = 2
+api.runtime = worker_peer_id  # the "peer " line of the runtime that printed "joined"
+
+sent = deploy_tree(Router(api=api), sn=[sn_multiaddr])
+# sent[0]["path"] == "api"
+# sent[0]["kind"] == "server"
+# sent[0]["workers"] == 2
+# sent[0]["port"] is the free port that peer's pool bound
+```
+
+`worker_peer_id` and `sn_multiaddr` come from the two processes in [start](#start). `sn_multiaddr` is the `sn` line. `worker_peer_id` is the `peer` line of the runtime that printed `joined` for that super node. The same call with `workers=2` a second time returns a record of the same path, kind, and worker count.
 
 ## What's new
 
