@@ -18,6 +18,10 @@ pip install pyouter
 
 Shell 补全见 [advanced.md](./advanced.md)。
 
+## 给编码代理
+
+`skills/` 是编码代理在编写或运行 pyouter 时要遵循的一组技能。Cursor 通过 `.agents/skills` 加载这个目录。从 [skills/pyouter/SKILL.md](skills/pyouter/SKILL.md) 开始。
+
 ## 一条路由
 
 叶子是一个函数。只有一个参数时，收到的是上下文。`include()` 挂上这棵树。

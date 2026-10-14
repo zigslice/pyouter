@@ -18,6 +18,10 @@ pip install pyouter
 
 Shell completion is in [advanced.md](./advanced.md).
 
+## For a coding agent
+
+`skills/` is the set of skills an agent should follow when it writes or runs pyouter. Cursor loads that directory through `.agents/skills`. Start with [skills/pyouter/SKILL.md](skills/pyouter/SKILL.md).
+
 ## A route
 
 A leaf is a function. One parameter receives a context. `include()` mounts the tree.
