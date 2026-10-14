@@ -50,18 +50,19 @@ class Hello_Sync:
 if __name__=="__main__":
     '''
     Usage:
-        ## execute:
+        ## start pyouter, then route into that process:
+        * python test.py
         * python test.py test.hello.func
         * python test.py test.hello.obj
         * python test.py test
-        
-        ## dump router path only:
-        * python test.py test.hello -i
-        * python test.py test.hello --insepect
-        
-        ## dump router path and execute:
-        * python test.py test.hello -v
-        * python test.py test.hello --view
+
+        ## list routes, or print the tree:
+        * python test.py --tasks
+        * python test.py --tree
+        * python test.py test.hello --tree
+
+        ## show the path while the node runs:
+        * python test.py test.hello.func --view
 
         ## browse and run in a local web ui:
         * python test.py --web
