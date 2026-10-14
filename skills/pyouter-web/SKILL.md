@@ -8,7 +8,7 @@ description: >-
 
 # Web services and pages
 
-Read `skills/pyouter/SKILL.md` first. Source: `src/pyouter/flatten.py`, `src/pyouter/web.py`, `src/pyouter/node.py`.
+Open this only after `skills/pyouter-help/SKILL.md` says the person has an HTTP app or asked for `--web`. A first mount of an existing app is `skills/pyouter-init/SKILL.md`. Source: `src/pyouter/flatten.py`, `src/pyouter/web.py`, `src/pyouter/node.py`. Rules: `skills/pyouter/SKILL.md`.
 
 Flask and FastAPI are not install dependencies of pyouter. They are imported only by the application you mount. Starting FastAPI needs `uvicorn`.
 

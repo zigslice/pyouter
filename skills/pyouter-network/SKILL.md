@@ -9,7 +9,7 @@ description: >-
 
 # Deploy, peers, and cluster
 
-Read `skills/pyouter/SKILL.md` and `skills/pyouter-layer/SKILL.md` first. Source: `src/pyouter/node.py`, `src/pyouter/peer.py`, `src/pyouter/cluster.py`.
+Open this only after `skills/pyouter-help/SKILL.md` says a layer must run on another machine, a peer id, or a cluster. Do not use it to start a project. Source: `src/pyouter/node.py`, `src/pyouter/peer.py`, `src/pyouter/cluster.py`. Rules: `skills/pyouter/SKILL.md`. Layers: `skills/pyouter-layer/SKILL.md`.
 
 `deploy_tree(router, sn=None, net=None)` installs each layer, then pushes that layer's slice. It returns one record per layer, outer path first: `path`, `kind`, `balancer`, `workers`, `port`. `port` is the free port that layer's pool bound. It is not `--port` of `pyouter.node`.
 

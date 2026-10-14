@@ -20,7 +20,7 @@ Shell 补全见 [advanced.md](./advanced.md)。
 
 ## 给编码代理
 
-`skills/` 是编码代理在编写或运行 pyouter 时要遵循的一组技能。Cursor 通过 `.agents/skills` 加载这个目录。从 [skills/pyouter/SKILL.md](skills/pyouter/SKILL.md) 开始。
+`skills/` 是编码代理在编写或运行 pyouter 时要遵循的一组技能。Cursor 通过 `.agents/skills` 加载这个目录。从 [skills/pyouter-help/SKILL.md](skills/pyouter-help/SKILL.md) 开始。新项目和一堆已有脚本的第一步不同。[skills/pyouter-init/SKILL.md](skills/pyouter-init/SKILL.md) 只创建第一个 `app.py`，然后停下来。
 
 ## 一条路由
 

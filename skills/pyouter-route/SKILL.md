@@ -9,7 +9,7 @@ description: >-
 
 # Routes
 
-Read `skills/pyouter/SKILL.md` first. Source: `src/pyouter/app.py`, `src/pyouter/router.py`, `src/pyouter/executor.py`, `src/pyouter/runtime.py`.
+The first `app.py` comes from `skills/pyouter-init/SKILL.md`. If the person is starting or bringing scripts in, follow `skills/pyouter-help/SKILL.md` and do not add a second command until that path runs. Source: `src/pyouter/app.py`, `src/pyouter/router.py`, `src/pyouter/executor.py`, `src/pyouter/runtime.py`. Rules: `skills/pyouter/SKILL.md`.
 
 ## A leaf
 
