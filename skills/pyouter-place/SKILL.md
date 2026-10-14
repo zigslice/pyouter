@@ -8,7 +8,7 @@ description: >-
 
 # Containers, Compose, and SSH
 
-Open this only after `skills/pyouter-help/SKILL.md` says a command must run in a container, a Compose file, or an SSH host. A script that runs on this machine stays a leaf. Source: `src/pyouter/docker.py`, `src/pyouter/ssh.py`. Rules: `skills/pyouter/SKILL.md`.
+Open this for a container, Compose file, or SSH host the project already runs. During `skills/pyouter-refactor/SKILL.md`, mount each one the contract lists. A local script stays a leaf. Source: `src/pyouter/docker.py`, `src/pyouter/ssh.py`. Rules: `skills/pyouter/SKILL.md`.
 
 The parent node owns the resource and stays up. A child runs only when its own path is routed, and only after the parent is up. Do not start Docker or SSH yourself with `subprocess` when one of these nodes can own it.
 

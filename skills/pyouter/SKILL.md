@@ -3,8 +3,9 @@ name: pyouter
 description: >-
   Use when an edit must follow pyouter's process model: a dotted route,
   python app.py, a leaf, a layer, deploy_tree, or python -m pyouter.node.
-  For a new project or an existing pile of scripts, read pyouter-help first
-  and create the tree with pyouter-init. This skill is the invariants.
+  For a new project, read pyouter-help and then pyouter-init. For an
+  existing project, read pyouter-help and then pyouter-refactor. This
+  skill is the invariants.
 ---
 
 # Pyouter
@@ -15,12 +16,13 @@ Human docs: `README.md` (English) and `README.zh-CN.md`. When a doc and the sour
 
 ## Which skill
 
-A first session starts at `skills/pyouter-help/SKILL.md`. That skill says when to open the rest. `skills/pyouter-init/SKILL.md` creates the first `app.py` and then stops.
+A first session starts at `skills/pyouter-help/SKILL.md`. A new project then uses `skills/pyouter-init/SKILL.md` and stops. An existing project uses `skills/pyouter-refactor/SKILL.md` and continues until every current command, service, and container is on the tree.
 
 | You are about to | Read |
 | --- | --- |
-| decide how a person starts, or adopt scripts they already run | `skills/pyouter-help/SKILL.md` |
-| create the first `app.py` | `skills/pyouter-init/SKILL.md` |
+| decide how a person starts | `skills/pyouter-help/SKILL.md` |
+| create the first `app.py` of a new project | `skills/pyouter-init/SKILL.md` |
+| refactor scripts, a CLI, a service, or containers into a pyouter tree | `skills/pyouter-refactor/SKILL.md` |
 | add a function, object, `include`, `use`, or a CLI command | `skills/pyouter-route/SKILL.md` |
 | mount Flask, FastAPI, or Starlette, or open a page | `skills/pyouter-web/SKILL.md` |
 | add a container, Compose project, or SSH host | `skills/pyouter-place/SKILL.md` |

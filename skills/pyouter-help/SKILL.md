@@ -1,11 +1,10 @@
 ---
 name: pyouter-help
 description: >-
-  Use when a person wants to start using pyouter, bring existing Python
-  scripts into pyouter, or asks how to use the pyouter skills. Two projects:
-  a new project from nothing, and an existing project of scripts, a CLI,
-  maybe a service, maybe containers. Walk one of those step by step and
-  open the other skills only when this skill says to.
+  Use when a person wants to start using pyouter, or asks which skill to
+  follow. Two projects: a new project from nothing uses pyouter-init, and
+  an existing project of scripts, a CLI, maybe a service, maybe containers
+  uses pyouter-refactor, which runs to the end and keeps current behavior.
 ---
 
 # How a person uses pyouter
@@ -48,29 +47,13 @@ Done for this session when one path runs and `--tasks` lists it.
 
 ## 3. Existing project
 
-1. Inventory before you edit. Show them this list, using their real files:
+Read `skills/pyouter-refactor/SKILL.md` and follow it until its contract is closed. Do not switch to `pyouter-init`. Do not stop after the first script, and do not wait to be asked for the next one.
 
-   ```text
-   commands:
-   - python scripts/ingest.py --date 2024-01-01  →  data.ingest
-   services:
-   - server.py Flask on 127.0.0.1:5000           →  api
-   containers:
-   - compose.yaml                                →  not in the first mount
-   left where they are:
-   - every other script
-   ```
+The refactor keeps every current command, service, and container working, moves the work into modules that match the dotted paths, and leaves `app.py` as the wiring. Old entry points stay as shims. It does not add a peer network.
 
-   Put in the first mount only the one command they run most. A service goes in only if they already start it. A container goes in only if they asked to run that stack from the tree. Everything else stays unmounted.
+## When a new project grows
 
-2. Read `skills/pyouter-init/SKILL.md`, section "Existing project". Add one `app.py`. Import their function or mount their app. Do not move, rename, or rewrite their modules.
-3. Show the mapping `old command → dotted path`. Then the same run as a new project: start `python app.py`, route that path from another terminal, then `python app.py --tasks`. The old command and the new path must do the same thing.
-4. The next group is another path, after this one works, and only if they want it. Read `skills/pyouter-route/SKILL.md`.
-5. Go to "When the tree grows" only for something on the inventory that they asked to include.
-
-Done for this session when that one old command runs through its dotted path.
-
-## When the tree grows
+This table is only for a new project, after its first route runs. An existing project does not pause here. `pyouter-refactor` already opens the route, web, and place skills for each row of its contract.
 
 Open a skill only when the row matches. Read `skills/pyouter/SKILL.md` for the rules that apply to every edit.
 
@@ -86,4 +69,6 @@ A script that runs on this machine stays a leaf. Do not put it in a container to
 
 ## What you tell them
 
-At each step, the next thing they type is one command. Say which process must already be running. Do not explain peers, the secret, or the cluster until the last row of the table is the thing they asked for.
+On a new project, the next thing they type is one command. Say which process must already be running.
+
+On an existing project, tell them the contract, then do the refactor. When it is closed, give them the table of old invocation, dotted path, and what you ran. Do not explain peers, the secret, or the cluster unless that project already deploys that way.

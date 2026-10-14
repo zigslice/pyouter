@@ -8,7 +8,7 @@ description: >-
 
 # Web services and pages
 
-Open this only after `skills/pyouter-help/SKILL.md` says the person has an HTTP app or asked for `--web`. A first mount of an existing app is `skills/pyouter-init/SKILL.md`. Source: `src/pyouter/flatten.py`, `src/pyouter/web.py`, `src/pyouter/node.py`. Rules: `skills/pyouter/SKILL.md`.
+Open this when the project has a Flask, FastAPI, or Starlette app, or someone asked for `--web`. During `skills/pyouter-refactor/SKILL.md`, mount each service the contract lists, then keep going. Source: `src/pyouter/flatten.py`, `src/pyouter/web.py`, `src/pyouter/node.py`. Rules: `skills/pyouter/SKILL.md`.
 
 Flask and FastAPI are not install dependencies of pyouter. They are imported only by the application you mount. Starting FastAPI needs `uvicorn`.
 
