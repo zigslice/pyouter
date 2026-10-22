@@ -1,0 +1,2 @@
+Vendored from https://github.com/zigslice/gd5 (MIT)
+d6732b5b994d73eb824e7849cee70c5828bc1a6a

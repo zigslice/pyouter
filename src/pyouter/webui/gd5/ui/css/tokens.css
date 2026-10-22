@@ -1,0 +1,81 @@
+/**
+ * gd5 UI kit tokens — white panels + selectable accent themes.
+ * Default: orange. Also: blue, green via data-gd-theme / setTheme().
+ */
+:root,
+[data-gd-theme='orange'] {
+  --gd-font: "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --gd-font-mono: "SF Mono", "Cascadia Code", "Consolas", monospace;
+
+  /* Shared structure: white panels + neutral masks */
+  --gd-bg-elevated: #ffffff;
+  --gd-bg-container: #ffffff;
+  --gd-text-inverse: #ffffff;
+  --gd-mask: rgba(0, 0, 0, 0.45);
+  --gd-mask-heavy: rgba(0, 0, 0, 0.75);
+
+  --gd-danger: #d14343;
+  --gd-danger-soft: rgba(209, 67, 67, 0.1);
+  --gd-warning: #d4890a;
+  --gd-success: #2f8f5b;
+  --gd-info: #2f6fed;
+
+  --gd-radius-sm: 4px;
+  --gd-radius: 8px;
+  --gd-radius-lg: 12px;
+
+  --gd-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --gd-control-h-sm: 28px;
+  --gd-control-h: 32px;
+  --gd-control-h-lg: 40px;
+
+  /* Orange theme (default): white surfaces, orange accent only */
+  --gd-theme-name: orange;
+  --gd-bg: #ffffff;
+  --gd-bg-spotlight: #f5f5f5;
+  --gd-text: #1f1a17;
+  --gd-text-secondary: #5c534c;
+  --gd-text-muted: #8a8178;
+  --gd-primary: #e86a17;
+  --gd-primary-hover: #f07a2a;
+  --gd-primary-active: #c95510;
+  --gd-primary-soft: rgba(232, 106, 23, 0.1);
+  --gd-border: #e8e2db;
+  --gd-border-strong: #d4cbc2;
+  --gd-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+[data-gd-theme='blue'] {
+  --gd-theme-name: blue;
+  --gd-bg: #f3f6fb;
+  --gd-bg-spotlight: #e8eef8;
+  --gd-text: #152033;
+  --gd-text-secondary: #4a5a73;
+  --gd-text-muted: #7a8aa3;
+  --gd-primary: #2f6fed;
+  --gd-primary-hover: #4580f5;
+  --gd-primary-active: #1f56c9;
+  --gd-primary-soft: rgba(47, 111, 237, 0.12);
+  --gd-border: #d9e2f0;
+  --gd-border-strong: #b8c7de;
+  --gd-shadow: 0 8px 24px rgba(30, 50, 90, 0.1);
+  --gd-info: #2f6fed;
+}
+
+[data-gd-theme='green'] {
+  --gd-theme-name: green;
+  --gd-bg: #f3f8f4;
+  --gd-bg-spotlight: #e6f2ea;
+  --gd-text: #15261b;
+  --gd-text-secondary: #456352;
+  --gd-text-muted: #6f8a78;
+  --gd-primary: #2f8f5b;
+  --gd-primary-hover: #3aa36a;
+  --gd-primary-active: #247549;
+  --gd-primary-soft: rgba(47, 143, 91, 0.12);
+  --gd-border: #d5e6db;
+  --gd-border-strong: #b3cfbc;
+  --gd-shadow: 0 8px 24px rgba(28, 60, 40, 0.1);
+  --gd-success: #2f8f5b;
+}

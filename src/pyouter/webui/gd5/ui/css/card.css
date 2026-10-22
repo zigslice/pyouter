@@ -1,0 +1,33 @@
+.gd-card {
+  background: var(--gd-bg-elevated);
+  border: 1px solid var(--gd-border);
+  border-radius: var(--gd-radius);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+}
+
+.gd-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--gd-border);
+}
+
+.gd-card__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gd-text);
+}
+
+.gd-card__body {
+  padding: 16px;
+}
+
+.gd-card__foot {
+  padding: 12px 16px;
+  border-top: 1px solid var(--gd-border);
+  background: var(--gd-bg-spotlight);
+}

@@ -1,0 +1,210 @@
+/* Checkbox */
+.gd-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--gd-font);
+  font-size: 14px;
+  color: var(--gd-text);
+  line-height: 1.2;
+}
+
+.gd-checkbox--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gd-checkbox__input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+}
+
+.gd-checkbox__box {
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--gd-border-strong);
+  border-radius: 4px;
+  background: var(--gd-bg-elevated);
+  flex-shrink: 0;
+  transition: background 140ms var(--gd-ease), border-color 140ms var(--gd-ease),
+    box-shadow 140ms var(--gd-ease);
+}
+
+.gd-checkbox__input:focus-visible + .gd-checkbox__box {
+  box-shadow: 0 0 0 3px var(--gd-primary-soft);
+}
+
+.gd-checkbox__input:checked + .gd-checkbox__box {
+  background: var(--gd-primary);
+  border-color: var(--gd-primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23fffaf5' stroke-width='2' d='M3.5 8.5l3 3 6-6'/%3E%3C/svg%3E");
+  background-size: 12px 12px;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.gd-checkbox__label {
+  color: var(--gd-text);
+}
+
+/* Switch */
+.gd-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: 44px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--gd-border-strong);
+  cursor: pointer;
+  transition: background 160ms var(--gd-ease);
+  vertical-align: middle;
+}
+
+.gd-switch--checked {
+  background: var(--gd-primary);
+}
+
+.gd-switch--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gd-switch__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 160ms var(--gd-ease);
+}
+
+.gd-switch--checked .gd-switch__knob {
+  transform: translateX(22px);
+}
+
+.gd-switch__text {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--gd-text-inverse);
+  pointer-events: none;
+}
+
+.gd-switch__text--on {
+  left: 8px;
+}
+
+.gd-switch__text--off {
+  right: 8px;
+  color: var(--gd-text-secondary);
+}
+
+/* Badge */
+.gd-badge {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.gd-badge--standalone {
+  align-items: center;
+  gap: 8px;
+}
+
+.gd-badge__count,
+.gd-badge__dot {
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: translate(50%, -50%);
+  z-index: 1;
+}
+
+.gd-badge__count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--gd-primary);
+  color: var(--gd-text-inverse);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  box-sizing: border-box;
+  box-shadow: 0 0 0 1px var(--gd-bg);
+}
+
+.gd-badge__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gd-danger);
+  box-shadow: 0 0 0 1px var(--gd-bg);
+}
+
+.gd-badge__status {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gd-text-muted);
+  flex-shrink: 0;
+}
+
+.gd-badge__status--success {
+  background: var(--gd-success);
+}
+
+.gd-badge__status--processing {
+  background: var(--gd-primary);
+  box-shadow: 0 0 0 0 var(--gd-primary-soft);
+  animation: gd-badge-pulse 1.2s ease-out infinite;
+}
+
+.gd-badge__status--error {
+  background: var(--gd-danger);
+}
+
+.gd-badge__status--warning {
+  background: var(--gd-warning);
+}
+
+.gd-badge__status--default {
+  background: var(--gd-text-muted);
+}
+
+.gd-badge__text {
+  font-size: 14px;
+  color: var(--gd-text);
+}
+
+@keyframes gd-badge-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--gd-primary-soft);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}

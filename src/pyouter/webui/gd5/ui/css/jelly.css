@@ -1,0 +1,73 @@
+/**
+ * Live jelly hosts. The canvas is the fill; the real control stays on top.
+ * position is set in JS only when computed position is static, so a fixed
+ * FAB keeps its own positioning.
+ */
+
+@property --gd-jelly-fill {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
+@property --gd-jelly-edge {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
+[data-gd-jelly-host].gd-jelly-live {
+  background: transparent !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
+  isolation: isolate;
+}
+
+.gd-btn.gd-jelly-live,
+.btn.gd-jelly-live,
+.gd-chip.gd-jelly-live {
+  border-radius: 999px;
+}
+
+.gd-btn.gd-jelly-live:active:not(:disabled),
+.btn.gd-jelly-live:active {
+  transform: none;
+}
+
+.gd-jelly-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.gd-jelly-switch__label {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  opacity: 0.82;
+}
+
+.gd-jelly-canvas {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.gd-jelly-probe,
+[data-gd-jelly-host].gd-jelly-live > .gd-jelly-probe {
+  position: absolute;
+  z-index: -1;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background-color: var(--gd-jelly-fill);
+}
+
+[data-gd-jelly-host].gd-jelly-live > :not(canvas) {
+  position: relative;
+  z-index: 1;
+}

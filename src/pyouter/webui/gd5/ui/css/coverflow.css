@@ -1,0 +1,213 @@
+/**
+ * CoverFlow — centered front card, tilted stacked neighbors (Cover Flow).
+ */
+
+:root,
+[data-gd-theme='orange'],
+[data-gd-theme='blue'],
+[data-gd-theme='green'] {
+  --gd-coverflow-h: 320px;
+  --gd-coverflow-card-w: 168px;
+  --gd-coverflow-card-h: 220px;
+  --gd-coverflow-bg: transparent;
+  --gd-coverflow-card-bg: var(--gd-bg-elevated);
+  --gd-coverflow-card-border: var(--gd-border);
+  --gd-coverflow-shadow: var(--gd-shadow);
+  --gd-coverflow-art: var(--gd-primary-soft);
+  --gd-coverflow-art-fg: var(--gd-primary);
+}
+
+.gd-coverflow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.gd-coverflow__stage {
+  position: relative;
+  height: var(--gd-coverflow-h);
+  perspective: 900px;
+  perspective-origin: 50% 45%;
+  transform-style: preserve-3d;
+  overflow: hidden;
+  border-radius: var(--gd-radius-lg);
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 60%, var(--gd-primary-soft), transparent 70%),
+    var(--gd-coverflow-bg);
+  outline: none;
+  touch-action: pan-y;
+  cursor: grab;
+}
+
+.gd-coverflow__stage:active,
+.gd-coverflow--live .gd-coverflow__stage {
+  cursor: grabbing;
+}
+
+.gd-coverflow--live .gd-coverflow__card {
+  transition: none;
+}
+
+.gd-coverflow__stage:focus-visible {
+  box-shadow: 0 0 0 2px var(--gd-primary-soft);
+}
+
+.gd-coverflow__card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--gd-coverflow-card-w);
+  height: var(--gd-coverflow-card-h);
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--gd-coverflow-card-border);
+  border-radius: var(--gd-radius);
+  background: var(--gd-coverflow-card-bg);
+  box-shadow: var(--gd-coverflow-shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transform-style: preserve-3d;
+  transition:
+    transform 320ms var(--gd-ease),
+    opacity 280ms var(--gd-ease),
+    box-shadow 280ms var(--gd-ease),
+    border-color 200ms var(--gd-ease);
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.gd-coverflow__card--active {
+  border-color: var(--gd-primary);
+  box-shadow:
+    0 16px 36px rgba(0, 0, 0, 0.14),
+    0 0 0 2px var(--gd-primary-soft);
+  z-index: 100;
+}
+
+.gd-coverflow__img {
+  display: block;
+  width: 100%;
+  height: 68%;
+  object-fit: cover;
+  pointer-events: none;
+  background: var(--gd-bg-spotlight);
+}
+
+.gd-coverflow__art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 68%;
+  background: var(--gd-coverflow-art);
+  color: var(--gd-coverflow-art-fg);
+  font-size: 56px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  pointer-events: none;
+}
+
+.gd-coverflow__meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 10px 12px 12px;
+  box-sizing: border-box;
+  background: var(--gd-bg-elevated);
+}
+
+.gd-coverflow__title {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--gd-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gd-coverflow__subtitle {
+  font-size: 12px;
+  color: var(--gd-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gd-coverflow__controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.gd-coverflow__caption {
+  min-width: 140px;
+  max-width: 280px;
+  text-align: center;
+}
+
+.gd-coverflow__caption-title {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--gd-text);
+}
+
+.gd-coverflow__caption-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--gd-text-muted);
+}
+
+.gd-coverflow__arrow {
+  min-width: 32px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.gd-coverflow__dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.gd-coverflow__dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--gd-border-strong);
+  cursor: pointer;
+  transition: transform 160ms var(--gd-ease), background 160ms var(--gd-ease);
+}
+
+.gd-coverflow__dot--active {
+  background: var(--gd-primary);
+  transform: scale(1.25);
+}
+
+.gd-coverflow__empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--gd-text-muted);
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .gd-coverflow {
+    --gd-coverflow-card-w: 140px;
+    --gd-coverflow-card-h: 190px;
+  }
+}

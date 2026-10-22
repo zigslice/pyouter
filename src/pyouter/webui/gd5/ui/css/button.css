@@ -1,0 +1,251 @@
+.gd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: var(--gd-radius-sm);
+  font-family: var(--gd-font);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: background 160ms var(--gd-ease), border-color 160ms var(--gd-ease),
+    color 160ms var(--gd-ease), transform 120ms var(--gd-ease),
+    --gd-jelly-fill 160ms var(--gd-ease);
+}
+
+.gd-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.gd-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gd-btn--sm {
+  height: var(--gd-control-h-sm);
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.gd-btn--md {
+  height: var(--gd-control-h);
+  padding: 0 14px;
+}
+
+.gd-btn--lg {
+  height: var(--gd-control-h-lg);
+  padding: 0 18px;
+  font-size: 15px;
+}
+
+.gd-btn--block {
+  display: flex;
+  width: 100%;
+}
+
+.gd-btn--default {
+  --gd-jelly-fill: var(--gd-bg-elevated);
+  --gd-jelly-edge: var(--gd-border-strong);
+  background: var(--gd-jelly-fill);
+  border-color: var(--gd-border-strong);
+  color: var(--gd-text);
+}
+
+.gd-btn--default:hover:not(:disabled) {
+  --gd-jelly-fill: var(--gd-bg-spotlight);
+  background: var(--gd-jelly-fill);
+}
+
+.gd-btn--primary {
+  --gd-jelly-fill: var(--gd-primary);
+  --gd-jelly-edge: transparent;
+  background: var(--gd-jelly-fill);
+  color: var(--gd-text-inverse);
+  font-weight: 600;
+}
+
+.gd-btn--primary:hover:not(:disabled) {
+  --gd-jelly-fill: var(--gd-primary-hover);
+  background: var(--gd-jelly-fill);
+}
+
+.gd-btn--primary:active:not(:disabled) {
+  --gd-jelly-fill: var(--gd-primary-active);
+  background: var(--gd-jelly-fill);
+}
+
+.gd-btn--ghost {
+  --gd-jelly-fill: transparent;
+  --gd-jelly-edge: var(--gd-border);
+  background: transparent;
+  border-color: var(--gd-border);
+  color: var(--gd-text-secondary);
+}
+
+.gd-btn--ghost:hover:not(:disabled) {
+  --gd-jelly-edge: var(--gd-border-strong);
+  border-color: var(--gd-border-strong);
+  color: var(--gd-text);
+}
+
+.gd-btn--danger {
+  --gd-jelly-fill: transparent;
+  --gd-jelly-edge: var(--gd-danger);
+  background: transparent;
+  border-color: var(--gd-danger);
+  color: var(--gd-danger);
+}
+
+.gd-btn--danger:hover:not(:disabled) {
+  --gd-jelly-fill: var(--gd-danger-soft);
+  background: var(--gd-jelly-fill);
+}
+
+.gd-btn--text {
+  background: transparent;
+  border-color: transparent;
+  color: var(--gd-primary);
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.gd-btn--text:hover:not(:disabled) {
+  background: var(--gd-primary-soft);
+}
+
+/* ── Loading Button ─────────────────────────────────────────── */
+
+.gd-btn--loading {
+  position: relative;
+  cursor: wait;
+  gap: 8px;
+}
+
+.gd-btn--loading:disabled {
+  opacity: 1;
+  cursor: wait;
+}
+
+.gd-btn--loading.gd-btn--default {
+  --gd-jelly-fill: var(--gd-primary-soft);
+  --gd-jelly-edge: transparent;
+  background: var(--gd-jelly-fill);
+  border-color: transparent;
+  color: var(--gd-primary);
+}
+
+.gd-btn--loading.gd-btn--primary {
+  --gd-jelly-fill: var(--gd-primary-active);
+  background: var(--gd-jelly-fill);
+  filter: saturate(1.05);
+}
+
+.gd-btn--loading.gd-btn--ghost,
+.gd-btn--loading.gd-btn--text {
+  background: var(--gd-primary-soft);
+  border-color: transparent;
+  color: var(--gd-primary);
+}
+
+.gd-btn--loading.gd-btn--danger {
+  background: var(--gd-danger-soft);
+  color: var(--gd-danger);
+}
+
+.gd-btn__label {
+  line-height: 1;
+}
+
+.gd-btn__indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.gd-btn__indicator--dots {
+  gap: 3px;
+  height: 1em;
+}
+
+.gd-btn__indicator--dots i {
+  display: block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  animation: gd-btn-dots 900ms var(--gd-ease) infinite;
+}
+
+.gd-btn__indicator--dots i:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.gd-btn__indicator--dots i:nth-child(2) {
+  animation-delay: 150ms;
+}
+
+.gd-btn__indicator--dots i:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+.gd-btn__indicator--spin {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  opacity: 0.85;
+  animation: gd-btn-spin 640ms linear infinite;
+}
+
+.gd-btn--sm .gd-btn__indicator--spin {
+  width: 10px;
+  height: 10px;
+}
+
+.gd-btn--lg .gd-btn__indicator--spin {
+  width: 14px;
+  height: 14px;
+}
+
+.gd-btn--sm .gd-btn__indicator--dots i {
+  width: 3px;
+  height: 3px;
+}
+
+@keyframes gd-btn-dots {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0) scale(0.85);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px) scale(1.15);
+  }
+}
+
+@keyframes gd-btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.gd-loading-button {
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.gd-loading-button:has(.gd-btn--block) {
+  display: flex;
+  width: 100%;
+}

@@ -731,6 +731,16 @@ class Handler(BaseHTTPRequestHandler):
             body = self.bridge.page().encode("utf-8")
             self._send(200, body, "text/html; charset=utf-8")
             return
+        if parsed.path.startswith("/webui/"):
+            from pyouter.webui import read_static
+
+            asset = read_static(parsed.path)
+            if asset is None:
+                self._send(404, b"not found", "text/plain; charset=utf-8")
+                return
+            body, content_type = asset
+            self._send(200, body, content_type)
+            return
         if parsed.path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
             return

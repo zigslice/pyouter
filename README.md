@@ -144,7 +144,7 @@ Router nodes run their children in parallel. `policy="sequence"` runs them in or
 
 ## Local web
 
-Open the current router in a browser. The server binds to `127.0.0.1:8765` and uses only the Python standard library.
+Open the current router in a browser. The server binds to `127.0.0.1:8765` and uses only the Python standard library. The page is a [gd5](https://github.com/zigslice/gd5) app: `Layout`, `Tree`, `Button`, `Card`, `Tag`, and the orange theme from that UI kit, served from `pyouter/webui`.
 
 ```shell
 python test.py --web
@@ -653,6 +653,10 @@ PYTHONPATH=src python3 -m unittest src.tests.test_cluster -v
 | `test_a_layer_with_its_own_runtime_is_not_sent_to_the_pod` | a child that names `runtime` is pushed there, and the pod receives the cluster slice |
 
 ## What's new
+
+### 0.13.0
+
+* rewrite the local web ui with the [gd5](https://github.com/zigslice/gd5) engine and orange UI kit
 
 ### 0.12.0
 

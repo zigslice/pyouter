@@ -1,0 +1,170 @@
+/**
+ * JsonTree — virtualized JSON viewer.
+ * Type colors work across orange / blue / green themes (white panels).
+ */
+
+:root,
+[data-gd-theme='orange'],
+[data-gd-theme='blue'],
+[data-gd-theme='green'] {
+  --gd-json-key: var(--gd-text);
+  --gd-json-string: #1a7f37;
+  --gd-json-number: #0958d9;
+  --gd-json-boolean: #cf1322;
+  --gd-json-null: var(--gd-text-muted);
+  --gd-json-punct: var(--gd-text-muted);
+  --gd-json-preview: var(--gd-text-secondary);
+  --gd-json-mark: color-mix(in srgb, var(--gd-warning) 28%, #fff8d6);
+  --gd-json-row-h: 22px;
+}
+
+.gd-json-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--gd-font-mono);
+  font-size: 12.5px;
+  color: var(--gd-text);
+}
+
+.gd-json-tree__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.gd-json-tree__viewport {
+  overflow: auto;
+  border: 1px solid var(--gd-border);
+  border-radius: var(--gd-radius);
+  background: var(--gd-bg-elevated);
+  overscroll-behavior: contain;
+}
+
+.gd-json-tree__viewport:focus {
+  outline: 2px solid var(--gd-primary-soft);
+  outline-offset: 1px;
+}
+
+.gd-json-tree__spacer {
+  width: 1px;
+  pointer-events: none;
+}
+
+.gd-json-tree__window {
+  position: relative;
+}
+
+.gd-json-tree__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  line-height: var(--gd-json-row-h);
+  cursor: default;
+}
+
+.gd-json-tree__row--complex {
+  cursor: pointer;
+}
+
+.gd-json-tree__row:hover {
+  background: var(--gd-bg-spotlight);
+}
+
+.gd-json-tree__row--marked {
+  background: var(--gd-json-mark);
+}
+
+.gd-json-tree__row--marked:hover {
+  background: color-mix(in srgb, var(--gd-warning) 36%, #fff8d6);
+}
+
+.gd-json-tree__twist {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--gd-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transform: rotate(0deg);
+  transition: transform 100ms linear, color 100ms linear;
+  border-radius: 2px;
+}
+
+.gd-json-tree__twist::before {
+  content: '';
+  display: block;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 3.5px 0 3.5px 5px;
+  border-color: transparent transparent transparent currentColor;
+}
+
+.gd-json-tree__twist--open {
+  transform: rotate(90deg);
+  color: var(--gd-primary);
+}
+
+.gd-json-tree__twist--leaf {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.gd-json-tree__twist:hover {
+  color: var(--gd-text);
+  background: color-mix(in srgb, var(--gd-text) 6%, transparent);
+}
+
+.gd-json-tree__key {
+  color: var(--gd-json-key);
+  font-weight: 600;
+}
+
+.gd-json-tree__colon,
+.gd-json-tree__punct {
+  color: var(--gd-json-punct);
+}
+
+.gd-json-tree__value--string {
+  color: var(--gd-json-string);
+}
+
+.gd-json-tree__value--number {
+  color: var(--gd-json-number);
+}
+
+.gd-json-tree__value--boolean {
+  color: var(--gd-json-boolean);
+  font-weight: 600;
+}
+
+.gd-json-tree__value--null {
+  color: var(--gd-json-null);
+  font-style: italic;
+}
+
+.gd-json-tree__preview {
+  color: var(--gd-json-preview);
+  font-weight: 600;
+}
+
+.gd-json-tree__empty {
+  padding: 16px;
+  color: var(--gd-text-muted);
+  font-family: var(--gd-font);
+}
+
+.gd-json-tree__hint {
+  font-family: var(--gd-font);
+  font-size: 12px;
+  color: var(--gd-text-muted);
+}

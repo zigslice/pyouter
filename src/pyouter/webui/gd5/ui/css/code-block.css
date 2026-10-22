@@ -1,0 +1,207 @@
+/**
+ * CodeBlock — native line-numbered code display (no highlight.js).
+ * Theme-aware via --gd-* tokens.
+ */
+
+:root,
+[data-gd-theme='orange'],
+[data-gd-theme='blue'],
+[data-gd-theme='green'] {
+  --gd-code-bg: var(--gd-bg-elevated);
+  --gd-code-fg: var(--gd-text);
+  --gd-code-gutter: var(--gd-text-muted);
+  --gd-code-gutter-border: var(--gd-border);
+  --gd-code-hl: var(--gd-primary-soft);
+  --gd-code-comment: #6a737d;
+  --gd-code-keyword: #cf222e;
+  --gd-code-string: #0a3069;
+  --gd-code-number: #0550ae;
+  --gd-code-punct: var(--gd-text-secondary);
+  --gd-code-line-h: 1.55;
+  --gd-code-add-bg: #e6ffec;
+  --gd-code-add-fg: #1a7f37;
+  --gd-code-del-bg: #ffebe9;
+  --gd-code-del-fg: #cf222e;
+  --gd-code-hunk-bg: #ddf4ff;
+  --gd-code-hunk-fg: #0550ae;
+  --gd-code-meta-fg: var(--gd-text-muted);
+}
+
+.gd-code {
+  position: relative;
+  border: 1px solid var(--gd-border);
+  border-radius: var(--gd-radius);
+  background: var(--gd-code-bg);
+  color: var(--gd-code-fg);
+  overflow: hidden;
+}
+
+.gd-code__copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 120ms var(--gd-ease);
+}
+
+.gd-code:hover .gd-code__copy,
+.gd-code:focus-within .gd-code__copy {
+  opacity: 1;
+}
+
+.gd-code__pre {
+  margin: 0;
+  padding: 12px 0;
+  overflow: auto;
+  font-family: var(--gd-font-mono);
+  font-size: 12.5px;
+  line-height: var(--gd-code-line-h);
+  tab-size: 2;
+}
+
+.gd-code__line {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-height: calc(1em * var(--gd-code-line-h));
+}
+
+.gd-code--numbered .gd-code__line {
+  grid-template-columns: var(--gd-code-gutter-w, 3.25rem) minmax(0, 1fr);
+}
+
+.gd-code__line--hl {
+  background: var(--gd-code-hl);
+}
+
+.gd-code__n {
+  display: block;
+  padding: 0 12px 0 10px;
+  border-right: 1px solid var(--gd-code-gutter-border);
+  color: var(--gd-code-gutter);
+  text-align: right;
+  user-select: none;
+  -webkit-user-select: none;
+  white-space: nowrap;
+}
+
+/* Numbers via attr — not in the DOM text, so they never enter the clipboard */
+.gd-code__n::before {
+  content: attr(data-line-number);
+}
+
+.gd-code__c {
+  display: block;
+  padding: 0 16px 0 12px;
+  white-space: pre;
+  font: inherit;
+  color: inherit;
+  overflow-wrap: normal;
+}
+
+.gd-code__empty {
+  display: inline-block;
+  width: 0;
+  height: 1em;
+}
+
+.gd-code__tok--comment {
+  color: var(--gd-code-comment);
+  font-style: italic;
+}
+
+.gd-code__tok--keyword {
+  color: var(--gd-code-keyword);
+  font-weight: 600;
+}
+
+.gd-code__tok--string {
+  color: var(--gd-code-string);
+}
+
+.gd-code__tok--number {
+  color: var(--gd-code-number);
+}
+
+.gd-code__tok--punct {
+  color: var(--gd-code-punct);
+}
+
+/* ── DiffBlock (unified, dual gutters) ─────────────────────────── */
+
+.gd-code--diff .gd-code__line {
+  grid-template-columns:
+    var(--gd-code-gutter-w, 2.75rem)
+    var(--gd-code-gutter-w, 2.75rem)
+    1.25rem
+    minmax(0, 1fr);
+}
+
+.gd-code--diff .gd-code__n {
+  border-right: none;
+  padding: 0 8px;
+}
+
+.gd-code--diff .gd-code__n--new {
+  border-right: 1px solid var(--gd-code-gutter-border);
+}
+
+.gd-code--diff .gd-code__n--empty::before {
+  content: '';
+}
+
+.gd-code__marker {
+  display: block;
+  text-align: center;
+  user-select: none;
+  -webkit-user-select: none;
+  font-weight: 600;
+  color: var(--gd-code-gutter);
+}
+
+.gd-code__marker::before {
+  content: attr(data-marker);
+}
+
+.gd-code__marker--empty::before {
+  content: '';
+}
+
+.gd-code__line--add {
+  background: var(--gd-code-add-bg);
+}
+
+.gd-code__line--add .gd-code__marker {
+  color: var(--gd-code-add-fg);
+}
+
+.gd-code__line--del {
+  background: var(--gd-code-del-bg);
+}
+
+.gd-code__line--del .gd-code__marker {
+  color: var(--gd-code-del-fg);
+}
+
+.gd-code__line--hunk {
+  background: var(--gd-code-hunk-bg);
+  color: var(--gd-code-hunk-fg);
+}
+
+.gd-code__line--hunk .gd-code__c {
+  color: var(--gd-code-hunk-fg);
+}
+
+.gd-code__line--meta .gd-code__c {
+  color: var(--gd-code-meta-fg);
+}
+
+.gd-code--diff .gd-code__line--hunk .gd-code__n,
+.gd-code--diff .gd-code__line--meta .gd-code__n {
+  border-right-color: transparent;
+}
+
+.gd-code--diff .gd-code__line--hunk .gd-code__n--new,
+.gd-code--diff .gd-code__line--meta .gd-code__n--new {
+  border-right: 1px solid var(--gd-code-gutter-border);
+}

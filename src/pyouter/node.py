@@ -111,6 +111,16 @@ class _Handler(BaseHTTPRequestHandler):
         if parsed.path == "/":
             self._page()
             return
+        if parsed.path.startswith("/webui/"):
+            from .webui import read_static
+
+            asset = read_static(parsed.path)
+            if asset is None:
+                self._send(404, {"error": "not found"})
+                return
+            body, content_type = asset
+            self._raw(200, body, content_type)
+            return
         if parsed.path == "/favicon.ico":
             self._raw(204, b"", "image/x-icon")
             return
