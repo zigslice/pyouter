@@ -1,0 +1,188 @@
+/* WorkflowDAG — multi-column DAG canvas */
+
+.gd-workflow {
+  --gd-wf-col-w: 220px;
+  --gd-wf-gap: 56px;
+  --gd-wf-node-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 320px;
+}
+
+.gd-workflow__viewport {
+  position: relative;
+  flex: 1;
+  min-height: 280px;
+  max-height: 480px;
+  overflow: auto;
+  border: 1px solid var(--gd-border);
+  border-radius: var(--gd-radius-lg);
+  background:
+    radial-gradient(circle at 1px 1px, var(--gd-border) 1px, transparent 0) 0 0 / 20px 20px,
+    var(--gd-bg);
+  cursor: grab;
+  overscroll-behavior: contain;
+}
+
+.gd-workflow__viewport:focus {
+  outline: 2px solid var(--gd-primary-soft);
+  outline-offset: 1px;
+}
+
+.gd-workflow__viewport.is-panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.gd-workflow__canvas {
+  position: relative;
+  display: inline-block;
+  min-width: 100%;
+  min-height: 100%;
+  padding: 28px 32px 40px;
+  box-sizing: border-box;
+}
+
+.gd-workflow__edges-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.gd-workflow__edges {
+  display: block;
+  overflow: visible;
+}
+
+.gd-workflow__edge {
+  stroke: var(--gd-border-strong);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
+
+.gd-workflow__arrow {
+  fill: var(--gd-border-strong);
+}
+
+.gd-workflow__columns {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--gd-wf-gap);
+  width: max-content;
+}
+
+.gd-workflow__column {
+  width: var(--gd-wf-col-w);
+  flex: 0 0 var(--gd-wf-col-w);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gd-workflow__column-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gd-text-muted);
+  padding: 0 4px;
+}
+
+.gd-workflow__column-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gd-workflow__node {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--gd-border);
+  border-radius: var(--gd-wf-node-radius);
+  background: var(--gd-bg-elevated);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  color: var(--gd-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 120ms var(--gd-ease),
+    box-shadow 120ms var(--gd-ease),
+    transform 120ms var(--gd-ease);
+}
+
+.gd-workflow__node:hover {
+  border-color: var(--gd-border-strong);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+.gd-workflow__node--selected {
+  border-color: var(--gd-primary);
+  box-shadow: 0 0 0 2px var(--gd-primary-soft);
+}
+
+.gd-workflow__node-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.gd-workflow__node-status {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--gd-text-muted);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--gd-bg-spotlight);
+}
+
+.gd-workflow__node--running .gd-workflow__node-status {
+  color: var(--gd-primary);
+  background: var(--gd-primary-soft);
+}
+
+.gd-workflow__node--success .gd-workflow__node-status {
+  color: var(--gd-success);
+  background: color-mix(in srgb, var(--gd-success) 12%, transparent);
+}
+
+.gd-workflow__node--error .gd-workflow__node-status {
+  color: var(--gd-danger);
+  background: var(--gd-danger-soft);
+}
+
+.gd-workflow__node--pending .gd-workflow__node-status {
+  color: var(--gd-text-muted);
+}
+
+.gd-workflow__node-desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--gd-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.gd-workflow__hint {
+  font-size: 12px;
+  color: var(--gd-text-muted);
+}
+
+.gd-workflow--static .gd-workflow__viewport {
+  max-height: none;
+  overflow: visible;
+  cursor: default;
+}

@@ -1,0 +1,2 @@
+recursive-include src/pyouter/webui *
+global-exclude __pycache__ *.py[cod] .DS_Store

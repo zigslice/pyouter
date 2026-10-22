@@ -1,0 +1,238 @@
+.po-shell {
+  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--gd-bg, #fff);
+  color: var(--gd-text, #1f1f1f);
+}
+
+.po-shell .gd-layout {
+  flex: 1;
+  min-height: 0;
+}
+
+.po-shell .gd-layout__sider {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--gd-border, #ebe6e0);
+  background: var(--gd-bg-elevated, #fff);
+  padding: 12px 12px 8px;
+  gap: 10px;
+}
+
+.po-shell .gd-layout__content {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.po-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--gd-border, #ebe6e0);
+  background: #fff;
+}
+
+.po-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.po-brand__name {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.po-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--gd-text-secondary, #6e6e73);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.po-sider__bar,
+.po-section__bar,
+.po-log__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.po-sider__title,
+.po-section__bar h3,
+.po-log__bar h3 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gd-text-secondary, #6e6e73);
+  font-weight: 700;
+}
+
+.po-sider__title {
+  display: block;
+}
+
+.po-sider__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.po-tree-host {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0 -4px;
+  padding: 0 4px 4px;
+}
+
+.po-sider__foot,
+.po-sider__hint {
+  color: var(--gd-text-secondary, #6e6e73);
+  font-size: 12px;
+}
+
+.po-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.po-title-row h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.po-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.po-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: var(--gd-text-secondary, #6e6e73);
+  word-break: break-all;
+}
+
+.po-doc,
+.po-signature {
+  color: var(--gd-text-secondary, #6e6e73);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.po-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.po-command {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--gd-fill-secondary, #f6f5f3);
+  border: 1px solid var(--gd-border, #ebe6e0);
+  border-radius: 8px;
+}
+
+.po-command code {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.po-map {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.po-map__kids {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.po-map-card {
+  cursor: pointer;
+}
+
+.po-map-card.is-selected {
+  outline: 2px solid var(--gd-primary, #e86a17);
+  outline-offset: 1px;
+}
+
+.po-log {
+  flex: 1;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.po-log__box {
+  flex: 1;
+  min-height: 200px;
+  max-height: min(48vh, 520px);
+  overflow: auto;
+  background: #111214;
+  color: #e8e6e3;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.po-log__line {
+  display: grid;
+  grid-template-columns: 28px 64px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.po-log__line.is-stderr .po-log__msg {
+  color: #ff8e8e;
+}
+
+.po-log__line.is-meta .po-log__msg {
+  color: #f0b36a;
+}
+
+.po-log__gutter,
+.po-log__ts {
+  color: #8b8680;
+}
+
+.po-empty {
+  color: var(--gd-text-secondary, #6e6e73);
+  padding: 24px 0;
+}
